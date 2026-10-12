@@ -1,0 +1,12 @@
+{
+  "python": "3.12.14",
+  "numpy": "2.3.5",
+  "pandas": "2.2.3",
+  "scikit-learn": "1.8.0",
+  "xgboost": "3.4.1",
+  "torch": "2.14.1+cpu",
+  "duckdb": "1.5.6",
+  "pyarrow": "24.0.0",
+  "fastapi": "0.143.0",
+  "mlflow-skinny": "3.17.0"
+}

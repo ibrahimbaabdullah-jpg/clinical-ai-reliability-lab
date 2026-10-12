@@ -1,0 +1,16 @@
+[
+  {
+    "hospital": "A",
+    "patients": 20336,
+    "patient_hours": 790215.0,
+    "sepsis_patients": 1790.0,
+    "prevalence": 0.08802124311565697
+  },
+  {
+    "hospital": "B",
+    "patients": 20000,
+    "patient_hours": 761995.0,
+    "sepsis_patients": 1142.0,
+    "prevalence": 0.0571
+  }
+]

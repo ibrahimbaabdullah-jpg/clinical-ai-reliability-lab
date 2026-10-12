@@ -10,15 +10,15 @@ WORKDIR /app
 RUN apt-get update \
     && apt-get install -y --no-install-recommends libgomp1 \
     && rm -rf /var/lib/apt/lists/*
-COPY pyproject.toml README.md requirements-tested.txt ./
+COPY pyproject.toml README.md requirements-tested.txt requirements-linux-py312.txt ./
 COPY clinical_lab ./clinical_lab
 COPY configs ./configs
 COPY docs ./docs
-# Constraints reproduce the direct versions used to generate released artifacts.
+# Constraints reproduce the installed dependency versions used for this Linux/Python release.
 # The default install does not pull PyTorch or MLflow.
-RUN python -m pip install --no-cache-dir --constraint requirements-tested.txt . \
+RUN python -m pip install --no-cache-dir --constraint requirements-linux-py312.txt . \
     && if [ "$WITH_DEEP" = "1" ]; then \
-         python -m pip install --no-cache-dir --constraint requirements-tested.txt torch \
+         python -m pip install --no-cache-dir --constraint requirements-linux-py312.txt torch \
            --index-url https://download.pytorch.org/whl/cpu; \
        elif [ "$WITH_DEEP" != "0" ]; then \
          echo 'WITH_DEEP must be 0 or 1' >&2; exit 1; \

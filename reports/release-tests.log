@@ -1,0 +1,99 @@
+Release verification: OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=1
+Protected hashes before:
+{
+  "bundles/full-v1/report.json": "2151bb8e9e4680ace2feab05e184c080b47c12ee327ae3f1c3b78600e9c9074d",
+  "bundles/full-v1/gru.joblib": "9fa8fe79e37a116507a1a1c27402375b43d589db68d7fab67904d67e8a37e3ec",
+  "bundles/full-v1/logistic.joblib": "81a9edc90dc25415aac533c70e0a1ebcc4dc22e12c3108a7759f12d4612422f5",
+  "bundles/full-v1/xgboost.joblib": "03511e24049fcb4fb6915ee183376727d4416bbbe5b71376e35ddbac4dff5899"
+}
+
+CHECK full_python_suite
+COMMAND .venv/bin/python -m pytest
+.................ssss................................................... [ 78%]
+....................                                                     [100%]
+=============================== warnings summary ===============================
+.venv/lib/python3.12/site-packages/fastapi/testclient.py:1
+  /workspace/scratch/af8a29c52e2f/clinical-ai-reliability-lab/.venv/lib/python3.12/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+88 passed, 4 skipped, 1 warning in 63.04s (0:01:03)
+EXIT 0
+
+CHECK full_report_web_contract
+COMMAND node tests/test_web_contract.cjs bundles/full-v1/report.json
+Web rendering contract passed: bundles/full-v1/report.json; missingness aliases, selection, calibration, selective endpoints, provenance.
+EXIT 0
+
+CHECK temporary_browser_export
+COMMAND .venv/bin/python scripts/export_browser_bundle.py --run bundles/full-v1 --output artifacts/site-test-full-v1/data --synthetic-patients 120 --seed 2019
+{
+  "format": "clinical-lab-portable-v1",
+  "families": [
+    "logistic",
+    "xgboost",
+    "gru"
+  ],
+  "model_source_sha256": {
+    "logistic": "81a9edc90dc25415aac533c70e0a1ebcc4dc22e12c3108a7759f12d4612422f5",
+    "xgboost": "03511e24049fcb4fb6915ee183376727d4416bbbe5b71376e35ddbac4dff5899",
+    "gru": "9fa8fe79e37a116507a1a1c27402375b43d589db68d7fab67904d67e8a37e3ec"
+  },
+  "training_source": "physionet-2019",
+  "replay_source": "synthetic",
+  "replay_patients": 120,
+  "contains_real_patient_records": false,
+  "contains_pickle": false,
+  "feature_definition": "clinical_lab.features.build_features v0.1; causal current-and-past only",
+  "attributions": {
+    "logistic": "exact coefficient-times-standardized-feature, before calibration",
+    "xgboost": "unavailable in portable engine; local Python provides native TreeSHAP",
+    "gru": "unavailable"
+  },
+  "files_sha256": {
+    "models.json": "59783886e0aff58265b908c7a63b4ab8a41b8735e69c29912eab8c1f378ceab8",
+    "synthetic-patients.json": "4d347123e99114983cc11daf6057c2228fa8a8e6365734763d03c89f1af12cf8",
+    "training-noise-scales.json": "2263851f07e431be84c452c173dff371dc87b561c8c3167c8c6680f407b5e48e",
+    "report.json": "e0c2b1a1f7faa8b11adbcfa16bfaf1fd3ceb723fdbea6becc8cf98bf7bbdb523"
+  }
+}
+EXIT 0
+
+CHECK full_static_runtime
+COMMAND node tests/test_site_runtime.cjs artifacts/site-test-full-v1/data
+Static runtime passed: 24 fitted-model/prefix replays, every stress severity, input guards, artifact provenance, all four UI pages, real JSON/CSV downloads.
+EXIT 0
+
+FINAL {
+  "checks": [
+    {
+      "check": "full_python_suite",
+      "exit_code": 0
+    },
+    {
+      "check": "full_report_web_contract",
+      "exit_code": 0
+    },
+    {
+      "check": "temporary_browser_export",
+      "exit_code": 0
+    },
+    {
+      "check": "full_static_runtime",
+      "exit_code": 0
+    }
+  ],
+  "protected_inputs_unchanged": true,
+  "hashes_after": {
+    "bundles/full-v1/report.json": "2151bb8e9e4680ace2feab05e184c080b47c12ee327ae3f1c3b78600e9c9074d",
+    "bundles/full-v1/gru.joblib": "9fa8fe79e37a116507a1a1c27402375b43d589db68d7fab67904d67e8a37e3ec",
+    "bundles/full-v1/logistic.joblib": "81a9edc90dc25415aac533c70e0a1ebcc4dc22e12c3108a7759f12d4612422f5",
+    "bundles/full-v1/xgboost.joblib": "03511e24049fcb4fb6915ee183376727d4416bbbe5b71376e35ddbac4dff5899"
+  }
+}
+
+CHECK post_edit_report_figures
+COMMAND .venv/bin/python -m pytest tests/test_report_figures.py
+....                                                                     [100%]
+4 passed in 3.86s
+EXIT 0

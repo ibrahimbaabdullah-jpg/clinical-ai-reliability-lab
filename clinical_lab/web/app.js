@@ -41,12 +41,19 @@ function overview() {
  $('run-disclosure').textContent = report.disclosure || (synthetic ? 'The generated population has an enriched event rate. Results validate the workflow, not clinical utility or safety.' : 'Retrospective results describe this specific cohort and protocol. They do not establish prospective clinical benefit. See the run manifest for data provenance and cohort restrictions.');
 }
 function svgChart(series, maxHour, threshold) {
- const w=850,h=230,m={left:44,right:18,top:12,bottom:34},x=t=>m.left+t/Math.max(1,maxHour)*(w-m.left-m.right),y=v=>h-m.bottom-v*(h-m.top-m.bottom);
+ const values=series.flatMap(item=>item.values).filter(finite);
+ const hasThreshold=finite(threshold)&&threshold>=0&&threshold<=1;
+ // Scale from the displayed prefix only, with 20% headroom and a 5% floor.
+ // Above-one thresholds represent a no-alert policy, not a probability to plot.
+ const largest=Math.max(0,...values,hasThreshold?threshold:0);
+ const yMax=Math.min(1,Math.max(.05,Math.ceil(largest*1.2*100)/100));
+ const tick=v=>`${Number((v*100).toFixed(2))}%`;
+ const w=850,h=230,m={left:56,right:18,top:12,bottom:34},x=t=>m.left+t/Math.max(1,maxHour)*(w-m.left-m.right),y=v=>h-m.bottom-v/yMax*(h-m.top-m.bottom);
  const path = values => values.map((v,i)=>`${i?'L':'M'}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
- let svg=`<svg viewBox="0 0 ${w} ${h}" role="img" aria-label="Calibrated model scores up to current replay hour">`;
- [0,.25,.5,.75,1].forEach(v=>svg+=`<line x1="${m.left}" y1="${y(v)}" x2="${w-m.right}" y2="${y(v)}" stroke="#e6ecee"/><text x="${m.left-10}" y="${y(v)+4}" text-anchor="end">${(v*100).toFixed(0)}%</text>`);
+ let svg=`<svg viewBox="0 0 ${w} ${h}" role="img" aria-label="Calibrated model scores up to current replay hour; automatic probability axis from 0% to ${tick(yMax)}">`;
+ [0,.25,.5,.75,1].map(fraction=>fraction*yMax).forEach(v=>svg+=`<line x1="${m.left}" y1="${y(v)}" x2="${w-m.right}" y2="${y(v)}" stroke="#e6ecee"/><text x="${m.left-10}" y="${y(v)+4}" text-anchor="end">${tick(v)}</text>`);
  [0,Math.round(maxHour/4),Math.round(maxHour/2),Math.round(maxHour*3/4),maxHour].filter((v,i,a)=>a.indexOf(v)===i).forEach(t=>svg+=`<text x="${x(t)}" y="${h-10}" text-anchor="middle">${t} h</text>`);
- if(threshold<=1)svg+=`<line x1="${m.left}" y1="${y(threshold)}" x2="${w-m.right}" y2="${y(threshold)}" stroke="#8b9fa9" stroke-dasharray="5 5"/>`;
+ if(hasThreshold)svg+=`<line x1="${m.left}" y1="${y(threshold)}" x2="${w-m.right}" y2="${y(threshold)}" stroke="#8b9fa9" stroke-dasharray="5 5"/>`;
  series.forEach(s=>{svg+=`<path d="${path(s.values)}" fill="none" stroke="${s.color}" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>`;const i=s.values.length-1;svg+=`<circle cx="${x(i)}" cy="${y(s.values[i])}" r="4" fill="${s.color}" stroke="#fff" stroke-width="2"/>`;});
  return svg+'</svg>';
 }

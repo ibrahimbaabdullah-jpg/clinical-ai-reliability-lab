@@ -22,15 +22,16 @@ jobs:
         with:
           python-version: '3.12'
           cache: pip
-      - run: python -m pip install --constraint requirements-tested.txt '.[dev,tracking]'
-      - run: python -m pip install --constraint requirements-tested.txt torch --index-url https://download.pytorch.org/whl/cpu
+      - run: python -m pip install --constraint requirements-linux-py312.txt '.[dev,tracking,reporting]'
+      - run: python -m pip install --constraint requirements-linux-py312.txt torch --index-url https://download.pytorch.org/whl/cpu
       - run: python -m pip check
       - run: python -m pytest
       - run: node tests/test_web_contract.cjs bundles/demo-v1/report.json
       - run: node tests/test_web_contract.cjs bundles/pilot-v1/report.json
+      - run: node tests/test_web_contract.cjs bundles/full-v1/report.json
       - name: Verify portable fitted models and the complete static runtime
         run: |
-          python scripts/build_site.py --run bundles/pilot-v1 --output "$RUNNER_TEMP/site"
+          python scripts/build_site.py --run bundles/full-v1 --output "$RUNNER_TEMP/site"
           node tests/test_site_runtime.cjs "$RUNNER_TEMP/site/data"
 
   installed-wheel:
@@ -49,7 +50,7 @@ jobs:
         run: |
           python -m pip wheel --no-deps --wheel-dir "$RUNNER_TEMP/wheels" .
           python -m venv "$RUNNER_TEMP/wheel-env"
-          "$RUNNER_TEMP/wheel-env/bin/python" -m pip install --constraint requirements-tested.txt "$RUNNER_TEMP"/wheels/*.whl
+          "$RUNNER_TEMP/wheel-env/bin/python" -m pip install --constraint requirements-linux-py312.txt "$RUNNER_TEMP"/wheels/*.whl
           "$RUNNER_TEMP/wheel-env/bin/python" -m pip check
       - name: Run installed training CLI outside the source checkout
         env:
@@ -121,8 +122,8 @@ jobs:
           WITH_DEEP: ${{ matrix.with_deep }}
         run: |
           mkdir -p "$RUNNER_TEMP/container-run"
-          cp bundles/demo-v1/report.json bundles/demo-v1/training_noise_scales.json bundles/demo-v1/logistic.joblib bundles/demo-v1/xgboost.joblib "$RUNNER_TEMP/container-run/"
-          if [ "$WITH_DEEP" = '1' ]; then cp bundles/demo-v1/gru.joblib "$RUNNER_TEMP/container-run/"; fi
+          cp bundles/full-v1/report.json bundles/full-v1/training_noise_scales.json bundles/full-v1/logistic.joblib bundles/full-v1/xgboost.joblib "$RUNNER_TEMP/container-run/"
+          if [ "$WITH_DEEP" = '1' ]; then cp bundles/full-v1/gru.joblib "$RUNNER_TEMP/container-run/"; fi
           chmod -R a+rX "$RUNNER_TEMP/container-run"
       - name: Verify mounted report/model loading and every model replay
         env:

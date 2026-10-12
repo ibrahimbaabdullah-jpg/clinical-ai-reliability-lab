@@ -1,0 +1,22 @@
+{
+  "command": [
+    "/workspace/scratch/af8a29c52e2f/clinical-ai-reliability-lab/.venv/bin/python",
+    "-u",
+    "-m",
+    "clinical_lab.cli",
+    "run",
+    "--data",
+    "data/full",
+    "--config",
+    "configs/benchmark.yaml",
+    "--output",
+    "artifacts/full-v1"
+  ],
+  "exit_code": 0,
+  "elapsed_seconds": 2086.077,
+  "peak_child_rss_kib": 6857928,
+  "user_cpu_seconds": 2295.271992,
+  "system_cpu_seconds": 94.104259,
+  "platform": "linux",
+  "note": "ru_maxrss units are KiB on Linux; excludes filesystem cache and other processes."
+}

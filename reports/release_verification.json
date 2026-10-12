@@ -1,0 +1,32 @@
+{
+  "release_version": "0.2.0",
+  "date": "2026-10-12",
+  "benchmark_training_revision": "7274308bc66c7d54c3c0481d06a590a68fd2bcc2",
+  "report_sha256": "2151bb8e9e4680ace2feab05e184c080b47c12ee327ae3f1c3b78600e9c9074d",
+  "full_cohort": {
+    "records": 40336,
+    "hours": 1552210
+  },
+  "python_suite": {
+    "passed": 88,
+    "skipped": 4,
+    "warnings": 1,
+    "seconds": 63.04,
+    "skip_reason": "Container/real-HTTP smoke tests require CLINICAL_LAB_BASE_URL; separate CI jobs exercise them"
+  },
+  "targeted_figure_recheck": {
+    "passed": 4,
+    "seconds": 3.86
+  },
+  "node_report_contract": "passed",
+  "portable_models_and_static_runtime": "passed",
+  "fitted_model_and_report_hashes_unchanged": true,
+  "scientific_png_visual_inspection": "all four inspected",
+  "browser_visual_qa": "not performed: required browser-control skill unavailable",
+  "ci_workflow_url": "https://github.com/ibrahimbaabdullah-jpg/clinical-ai-reliability-lab/actions/workflows/tests.yml",
+  "files": {
+    "reports/release-tests.log": "75386e57e4ecaf3faf73084c168db0a95ea8dbd322f4908d48b7ccc38e67c7ec",
+    "reports/full-v1-telemetry.json": "fc9dfaec72a7ddbd02bca97f5a1f265c43de88cf0b17103b996ea2d92ddbb6ac",
+    "reports/figures/full-v1/figure-manifest.json": "7b11ad7158ca55a05376e53790b68b43d851b9249c9229ff606428b4d9c62333"
+  }
+}

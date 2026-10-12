@@ -2,11 +2,13 @@
 
 Two runtimes share the dashboard: a local FastAPI application executes the Python models; the hosted edition executes exported fitted-model weights in the browser. Both replay **generated synthetic patients only**. Reports preserve the source and cohort status of their original experiment.
 
-The registered owner-private deployment target is:
+An owner-private version has been deployed at:
 
 <https://clinical-ai-reliability-lab.ibrahimbaabdullah.chatgpt.site/>
 
-Registration does not establish successful deployment or access for other users. Confirm the deployed revision and visibility before distributing this link. This guide does not assert that a full-cohort run or hosted release has completed.
+Sites project: `appgprj_6acd164ff5488191a79f697ed90c3dd5`. The same URL can serve successive releases. Its loaded `report.json`, browser manifest, and deployed revision identify the evidence actually being displayed; a working URL alone does not prove that the full-cohort bundle has been promoted.
+
+The release workflow below uses `bundles/full-v1`. Commands targeting that directory require the completed report, model checkpoints, and manifests. An earlier checkout can substitute `bundles/pilot-v1` to inspect the preserved preliminary experiment. Neither bundle changes the synthetic-only replay restriction.
 
 ## Local Python dashboard
 
@@ -21,15 +23,15 @@ python -m uvicorn clinical_lab.api:app --host 127.0.0.1 --port 8000
 
 Open <http://127.0.0.1:8000>. Without `CLINICAL_LAB_RUN`, the first request trains and caches a small synthetic logistic demonstration. No account, clinical-data download, or API key is needed. On Windows, activate `.venv\Scripts\Activate.ps1` in PowerShell instead of the `source` command.
 
-For the tested Linux CPU environment, constrain the direct dependencies with `-c requirements-tested.txt`. Loading or training the GRU also needs PyTorch:
+For the tested Linux CPU environment, constrain the dependency closure with `-c requirements-linux-py312.txt`. Loading or training the GRU also needs PyTorch:
 
 ```bash
-python -m pip install -c requirements-tested.txt -e '.[dev]'
-python -m pip install -c requirements-tested.txt torch --index-url https://download.pytorch.org/whl/cpu
-CLINICAL_LAB_RUN="$PWD/bundles/pilot-v1" python -m uvicorn clinical_lab.api:app --host 127.0.0.1 --port 8000
+python -m pip install -c requirements-linux-py312.txt -e '.[dev]'
+python -m pip install -c requirements-linux-py312.txt torch --index-url https://download.pytorch.org/whl/cpu
+CLINICAL_LAB_RUN="$PWD/bundles/full-v1" python -m uvicorn clinical_lab.api:app --host 127.0.0.1 --port 8000
 ```
 
-`requirements-tested.txt` describes Linux x86_64 / Python 3.12 direct versions, including the CPU PyTorch wheel; it is not a platform-independent or transitive lockfile. The synthetic logistic dashboard can run independently of PyTorch on an Intel Mac. The current GRU environment has not been validated on Intel macOS; use the compatible Linux CPU environment or Docker for all three families.
+`requirements-tested.txt` records direct versions; `requirements-linux-py312.txt` also records their installed transitive dependency closure for Linux x86_64 / Python 3.12, including the CPU PyTorch wheel. These are constraints snapshots, not platform-independent or wheel-hash lockfiles. The synthetic logistic dashboard can run independently of PyTorch on an Intel Mac. The current GRU environment has not been validated on Intel macOS; use the compatible Linux CPU environment or Docker for all three families.
 
 Use a **trusted** run directory containing `report.json`, `<family>.joblib`, and `training_noise_scales.json`. Joblib loading executes Python serialization; never load an uploaded or untrusted model. Stop the prior server before restarting with a different run. The app caches its loaded experiment.
 
@@ -46,7 +48,36 @@ CLINICAL_LAB_RUN="$PWD/artifacts/my-demo" python -m uvicorn clinical_lab.api:app
 
 Choose a new output directory for each completed experiment. The CLI refuses to overwrite a completed report. See the README and [protocol](protocol.md) for real-data acquisition and complete-cohort training.
 
-`bundles/full-v1` is the intended location for an eventual completed full-cohort release. Use it only after its models, report, and manifests exist and its evidence status is verified; directory naming alone is not proof of complete-cohort evaluation.
+## Promote the completed full-cohort bundle
+
+The full dataset contains **40,336 ICU stays and 1,552,210 patient-hours**: 20,336 hospital A stays and 20,000 hospital B stays. Training and development-family selection precede held-out evaluation. Completed evaluation and saved reports are required before exporting a release; fitted checkpoint files alone do not establish completion.
+
+Keep the preliminary `bundles/pilot-v1` and synthetic `bundles/demo-v1` evidence separate. Assemble `bundles/full-v1` from the completed full run's aggregate reports, trusted fitted models, configuration, manifests, and training-only noise scales. Do not add clinical records or patient-level predictions to the release bundle.
+
+Check the release report before loading or exporting it:
+
+```bash
+python - <<'PY'
+import json
+from pathlib import Path
+run = Path('bundles/full-v1')
+report = json.loads((run / 'report.json').read_text())
+metadata = report['metadata']
+assert metadata['source'] == 'physionet-2019'
+assert metadata['complete_public_cohort'] is True
+assert metadata['patients'] == 40336
+assert metadata['patient_hours'] == 1552210
+assert metadata['patients_by_hospital'] == {'A': 20336, 'B': 20000}
+for family in ('logistic', 'xgboost', 'gru'):
+    assert (run / f'{family}.joblib').is_file()
+    assert 'test' in report['models'][family]
+    assert 'external' in report['models'][family]
+assert (run / 'training_noise_scales.json').is_file()
+print('Completed full-cohort bundle metadata verified')
+PY
+```
+
+These checks establish basic release consistency; retain the run's file hashes, frozen selection record, protocol, and executed verification evidence for provenance.
 
 ## Docker
 
@@ -62,7 +93,7 @@ To load a three-family run, include CPU PyTorch and mount the trusted artifacts 
 ```bash
 docker build --build-arg WITH_DEEP=1 -t clinical-ai-reliability-lab:deep .
 docker run --rm -p 127.0.0.1:8000:8000 \
-  -v "$PWD/bundles/pilot-v1:/app/run:ro" \
+  -v "$PWD/bundles/full-v1:/app/run:ro" \
   -e CLINICAL_LAB_RUN=/app/run \
   clinical-ai-reliability-lab:deep
 ```
@@ -75,7 +106,7 @@ Export from the same compatible Python environment that can load the trusted mod
 
 ```bash
 python scripts/export_browser_bundle.py \
-  --run bundles/pilot-v1 \
+  --run bundles/full-v1 \
   --output artifacts/site/data \
   --synthetic-patients 120 \
   --seed 2019
@@ -117,10 +148,12 @@ Hosted logistic contributions are exact contributions before calibration. Portab
 
 ```bash
 python -m pytest
-node tests/test_web_contract.cjs bundles/pilot-v1/report.json
+node tests/test_web_contract.cjs bundles/full-v1/report.json
 node tests/test_site_runtime.cjs artifacts/site/data
 ```
 
 Numerical export tests compare fitted Python predictions and browser predictions; runtime tests exercise all three families, four replay modes, causal prefixes, provenance, validation, and JSON/CSV downloads. Node tests do not establish visual layout or accessibility conformance.
 
-After deployment, verify the actual hosted asset responses, evidence banner, model availability, replay controls, report downloads, and owner access. Record the deployed revision and any unavailable checks in `docs/verification.md`. A browser inspection that could not be performed must remain marked pending; do not substitute a successful deployment response for visual QA.
+After deployment, verify actual hosted asset responses and match their report/manifest to the intended release. Check owner access, the evidence banner, model availability, replay controls, and report downloads when supported browser inspection becomes available. Record the deployed revision and any unavailable checks in `docs/verification.md`.
+
+**Visual QA remains unverified in this execution:** the Sites-required `control-browser` skill was unavailable. Node rendering contracts, numerical model parity, successful asset checks, and a deployment response are not desktop/mobile visual or accessibility QA. Keep those distinctions in release notes until a supported browser inspection is performed.

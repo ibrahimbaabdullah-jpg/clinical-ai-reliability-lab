@@ -1,0 +1,17 @@
+{
+  "source_report_sha256": "2151bb8e9e4680ace2feab05e184c080b47c12ee327ae3f1c3b78600e9c9074d",
+  "script_sha256": "333342796e22c6236bc090b81b890ea577e802cafbd62ccd5181c2162c2eff33",
+  "python": "3.12.14",
+  "matplotlib": "3.10.8",
+  "files": {
+    "01_primary_performance.png": "e708b874e04b590b2c0300adb73ba9de35da9ffaef9d0755be3936ba389e6552",
+    "01_primary_performance.svg": "5b7c432c29315652526006017ebbd7697c37ef6dd067c0dc23c036f7f88bc814",
+    "02_external_calibration.png": "e70123adf6c8bff37a0015982ab66857cf0e917fbbb18dfe7b3f89ff6f0ee56b",
+    "02_external_calibration.svg": "b7c446c9b83c76a7efa69f3334b4829ad2a60237af3b0b2ff221d138a7afca66",
+    "03_observation_stress.png": "c3d4aaab21d472ce7b8a99864513acf5791e5f70f8b583c529a09dfc53006d7f",
+    "03_observation_stress.svg": "f5d592b71f3cdcbede754cdf5d65eab207ae2d05824548816a7b2a224002cbda",
+    "04_selective_withholding.png": "afa52be9696bbf0225561ae6360f876551f0a4b7a0864543f36ff1f53d8192a7",
+    "04_selective_withholding.svg": "dca6931f50c802ab6f51409fbb82ceb13983a5334032c0df00e25152ff4a9ca8",
+    "figure-data.json": "e5e9247235d7ff6aecd9d178408e5b9c85ba2bbd3446d67a7c304601b052f53c"
+  }
+}
