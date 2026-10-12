@@ -1,9 +1,15 @@
-.git
-.venv
-data
-artifacts
-mlruns
-mlartifacts
-**/__pycache__
-.env*
-tests
+# Explicit allowlist: never send datasets, model bundles, credentials, or Git state.
+**
+!Dockerfile
+!pyproject.toml
+!README.md
+!requirements-tested.txt
+!clinical_lab/
+!clinical_lab/**
+!configs/
+!configs/**
+!docs/
+!docs/**
+**/__pycache__/
+**/*.pyc
+**/.env*

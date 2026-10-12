@@ -5,22 +5,133 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
+    env:
+      OMP_NUM_THREADS: '2'
+      OPENBLAS_NUM_THREADS: '2'
+      MLFLOW_DISABLE_AGENT_HINT: '1'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
           cache: pip
-      - run: python -m pip install '.[dev,tracking]'
-      - run: python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - run: python -m pip install --constraint requirements-tested.txt '.[dev,tracking]'
+      - run: python -m pip install --constraint requirements-tested.txt torch --index-url https://download.pytorch.org/whl/cpu
+      - run: python -m pip check
       - run: python -m pytest
-        env:
-          OMP_NUM_THREADS: '2'
-          OPENBLAS_NUM_THREADS: '2'
-          MLFLOW_DISABLE_AGENT_HINT: '1'
       - run: node tests/test_web_contract.cjs bundles/demo-v1/report.json
       - run: node tests/test_web_contract.cjs bundles/pilot-v1/report.json
+
+  installed-wheel:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      OMP_NUM_THREADS: '2'
+      OPENBLAS_NUM_THREADS: '2'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Build wheel and install into an isolated environment
+        run: |
+          python -m pip wheel --no-deps --wheel-dir "$RUNNER_TEMP/wheels" .
+          python -m venv "$RUNNER_TEMP/wheel-env"
+          "$RUNNER_TEMP/wheel-env/bin/python" -m pip install --constraint requirements-tested.txt "$RUNNER_TEMP"/wheels/*.whl
+          "$RUNNER_TEMP/wheel-env/bin/python" -m pip check
+      - name: Run installed training CLI outside the source checkout
+        env:
+          TASK_SCRATCH: ${{ runner.temp }}/wheel-execution
+        run: |
+          mkdir -p "$TASK_SCRATCH"
+          python - <<'PY'
+          import os, pathlib
+          pathlib.Path(os.environ['TASK_SCRATCH'], 'config.yaml').write_text('seed: 2019\nfamilies: [logistic]\nbootstrap: 3\nsynthetic_patients: 80\nstress: false\nablations: false\ntracking: false\nmodels:\n  logistic:\n    C_grid: [0.1]\n')
+          PY
+          cd "$TASK_SCRATCH"
+          "$RUNNER_TEMP/wheel-env/bin/clinical-lab" run --synthetic --config config.yaml --output run
+          cmp "$GITHUB_WORKSPACE/docs/protocol.md" run/protocol.md
+      - name: Serve the installed wheel and exercise real HTTP routes
+        env:
+          CLINICAL_LAB_BASE_URL: http://127.0.0.1:8010
+          CLINICAL_LAB_EXPECT_MODELS: logistic
+          CLINICAL_LAB_EXPECT_DEMO: '0'
+        run: |
+          cd "$RUNNER_TEMP/wheel-execution"
+          CLINICAL_LAB_RUN="$PWD/run" "$RUNNER_TEMP/wheel-env/bin/python" -m uvicorn clinical_lab.api:app --host 127.0.0.1 --port 8010 > "$RUNNER_TEMP/wheel-api.log" 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          python "$GITHUB_WORKSPACE/tests/test_container_smoke.py"
+      - name: Print wheel API log on failure
+        if: failure()
+        run: cat "$RUNNER_TEMP/wheel-api.log" 2>/dev/null || true
+
+  container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: cpu
+            with_deep: '0'
+            expected_models: logistic,xgboost
+          - variant: deep-cpu
+            with_deep: '1'
+            expected_models: logistic,xgboost,gru
+    env:
+      TEST_IMAGE: clinical-ai-reliability-lab:${{ matrix.variant }}-${{ github.sha }}
+      CLINICAL_LAB_BASE_URL: http://127.0.0.1:8000
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the actual image without publishing
+        run: docker build --build-arg WITH_DEEP=${{ matrix.with_deep }} --tag "$TEST_IMAGE" .
+      - name: Verify runtime user and optional CPU dependency
+        env:
+          WITH_DEEP: ${{ matrix.with_deep }}
+        run: |
+          docker run --rm --entrypoint python "$TEST_IMAGE" -c 'import os; assert os.getuid() != 0'
+          if [ "$WITH_DEEP" = '1' ]; then
+            docker run --rm --entrypoint python "$TEST_IMAGE" -c 'import torch; assert torch.version.cuda is None'
+          else
+            docker run --rm --entrypoint python "$TEST_IMAGE" -c 'import importlib.util; assert importlib.util.find_spec("torch") is None'
+          fi
+      - name: Verify default synthetic startup and real replay
+        env:
+          CLINICAL_LAB_EXPECT_MODELS: logistic
+          CLINICAL_LAB_EXPECT_DEMO: '1'
+        run: |
+          docker run --detach --name lab-default --publish 127.0.0.1:8000:8000 "$TEST_IMAGE"
+          python tests/test_container_smoke.py
+          docker stop lab-default
+      - name: Prepare a trusted fixture mount for available model families
+        env:
+          WITH_DEEP: ${{ matrix.with_deep }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/container-run"
+          cp bundles/demo-v1/report.json bundles/demo-v1/training_noise_scales.json bundles/demo-v1/logistic.joblib bundles/demo-v1/xgboost.joblib "$RUNNER_TEMP/container-run/"
+          if [ "$WITH_DEEP" = '1' ]; then cp bundles/demo-v1/gru.joblib "$RUNNER_TEMP/container-run/"; fi
+          chmod -R a+rX "$RUNNER_TEMP/container-run"
+      - name: Verify mounted report/model loading and every model replay
+        env:
+          CLINICAL_LAB_EXPECT_MODELS: ${{ matrix.expected_models }}
+          CLINICAL_LAB_EXPECT_DEMO: '0'
+        run: |
+          docker run --detach --name lab-mounted --publish 127.0.0.1:8000:8000 --mount "type=bind,source=$RUNNER_TEMP/container-run,target=/app/run,readonly" --env CLINICAL_LAB_RUN=/app/run "$TEST_IMAGE"
+          python tests/test_container_smoke.py
+          docker inspect --format '{{json .State.Health}}' lab-mounted
+      - name: Show image identity and container logs
+        if: always()
+        run: |
+          docker image inspect --format '{{.Id}} {{.Created}}' "$TEST_IMAGE" || true
+          docker logs lab-default || true
+          docker logs lab-mounted || true
+          docker rm --force lab-default lab-mounted || true

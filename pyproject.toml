@@ -26,7 +26,7 @@ clinical-lab = "clinical_lab.cli:main"
 include = ["clinical_lab*"]
 
 [tool.setuptools.package-data]
-clinical_lab = ["web/*", "vendor/*.txt"]
+clinical_lab = ["web/*", "vendor/*.txt", "vendor/*.md", "resources/*.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

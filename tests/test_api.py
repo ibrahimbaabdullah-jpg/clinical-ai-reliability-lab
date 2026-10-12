@@ -53,7 +53,10 @@ def test_replay_uses_only_causal_prefix(client, stress):
     assert current.status_code == later.status_code == 200
     a, b = current.json(), later.json()
     assert a["hours"] == list(range(13))
-    np.testing.assert_allclose(a["scores"], b["scores"][:13], atol=1e-12)
+    # Inference uses float32 features; BLAS kernels can accumulate differently
+    # for different batch shapes across CPUs. Feature causality is tested exactly
+    # in test_features.py; probabilities allow only float32-scale roundoff.
+    np.testing.assert_allclose(a["scores"], b["scores"][:13], rtol=1e-5, atol=1e-7)
     np.testing.assert_allclose(a["baseline_scores"], b["baseline_scores"][:13], atol=1e-12)
     assert all(0 <= value <= 1 for value in a["scores"])
     assert a["contribution_scale"] == "uncalibrated_log_odds"

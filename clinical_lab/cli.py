@@ -5,6 +5,7 @@ import argparse
 from datetime import datetime, timezone
 import hashlib
 import importlib.metadata
+import importlib.resources
 import json
 from pathlib import Path
 import subprocess
@@ -82,7 +83,10 @@ def verify_download(root):
         if not file.is_relative_to(root):
             raise ValueError('Manifest path escapes the data root')
         url = urlparse(row['source_url'])
-        if url.scheme != 'https' or url.hostname not in {'physionet.org', 'www.physionet.org', 'archive.physionet.org'}:
+        official_origin = url.hostname in {'physionet.org', 'www.physionet.org', 'archive.physionet.org'}
+        official_mirror = (url.hostname == 'physionet-open.s3.amazonaws.com'
+                           and url.path.startswith('/challenge-2019/1.0.0/training/'))
+        if url.scheme != 'https' or not (official_origin or official_mirror):
             raise ValueError('Manifest has a nonofficial data source')
         if hashlib.sha256(file.read_bytes()).hexdigest() != row['sha256']:
             raise ValueError(f'Data checksum mismatch: {row["path"]}')
@@ -169,8 +173,7 @@ def run(args):
     write_json(output / 'split_manifest.json', split_ids)
     config_text = yaml.safe_dump(config, sort_keys=True)
     (output / 'config.yaml').write_text(config_text)
-    protocol_path = Path(__file__).resolve().parents[1] / 'docs' / 'protocol.md'
-    protocol_text = protocol_path.read_text() if protocol_path.exists() else 'See versioned repository docs/protocol.md'
+    protocol_text = importlib.resources.files('clinical_lab').joinpath('resources/protocol.md').read_text()
     (output / 'protocol.md').write_text(protocol_text)
     env = versions()
     write_json(output / 'environment.json', env)
