@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
-from clinical_lab import api
+from clinical_lab import __version__, api
 from clinical_lab.data import DYNAMIC_COLUMNS
 
 
@@ -26,6 +26,12 @@ def client():
 def _payload(client, **overrides):
     patient = client.get("/api/patients").json()["patients"][0]
     return {"patient_id": patient["id"], "family": "logistic", "hour": 12, **overrides}
+
+
+def test_openapi_reports_current_package_version(client):
+    response = client.get("/openapi.json")
+    assert response.status_code == 200
+    assert response.json()["info"]["version"] == __version__
 
 
 def test_dashboard_routes_and_actual_demo_report(client):
