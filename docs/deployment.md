@@ -27,9 +27,12 @@ For the tested Linux CPU environment, constrain the dependency closure with `-c 
 
 ```bash
 python -m pip install -c requirements-linux-py312.txt -e '.[dev]'
+python -m pip install -c requirements-linux-py312.txt filelock typing-extensions setuptools sympy networkx jinja2 fsspec
 python -m pip install -c requirements-linux-py312.txt torch --index-url https://download.pytorch.org/whl/cpu
 CLINICAL_LAB_RUN="$PWD/bundles/full-v1" python -m uvicorn clinical_lab.api:app --host 127.0.0.1 --port 8000
 ```
+
+Install the pinned general dependencies from the regular package index before selecting the CPU-only PyTorch index; that index does not carry every pinned general-purpose package version. Docker and CI use the same sequence and finish with `pip check`.
 
 `requirements-tested.txt` records direct versions; `requirements-linux-py312.txt` also records their installed transitive dependency closure for Linux x86_64 / Python 3.12, including the CPU PyTorch wheel. These are constraints snapshots, not platform-independent or wheel-hash lockfiles. The synthetic logistic dashboard can run independently of PyTorch on an Intel Mac. The current GRU environment has not been validated on Intel macOS; use the compatible Linux CPU environment or Docker for all three families.
 

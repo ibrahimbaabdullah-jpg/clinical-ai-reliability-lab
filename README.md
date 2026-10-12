@@ -57,7 +57,8 @@ Open **http://127.0.0.1:8000**. The first request trains a small deterministic s
 Install PyTorch for your platform. The verified Linux CPU command is:
 
 ```bash
-python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+python -m pip install -c requirements-linux-py312.txt filelock typing-extensions setuptools sympy networkx jinja2 fsspec
+python -m pip install -c requirements-linux-py312.txt torch --index-url https://download.pytorch.org/whl/cpu
 CLINICAL_LAB_RUN=bundles/full-v1 python -m uvicorn clinical_lab.api:app --host 127.0.0.1 --port 8000
 
 # Or reproduce the smaller synthetic workflow in a new run directory

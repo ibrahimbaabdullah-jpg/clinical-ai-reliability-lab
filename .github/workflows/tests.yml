@@ -23,6 +23,8 @@ jobs:
           python-version: '3.12'
           cache: pip
       - run: python -m pip install --constraint requirements-linux-py312.txt '.[dev,tracking,reporting]'
+      - name: Install pinned Torch dependencies from the regular package index
+        run: python -m pip install --constraint requirements-linux-py312.txt filelock typing-extensions setuptools sympy networkx jinja2 fsspec
       - run: python -m pip install --constraint requirements-linux-py312.txt torch --index-url https://download.pytorch.org/whl/cpu
       - run: python -m pip check
       - run: python -m pytest

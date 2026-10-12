@@ -18,6 +18,9 @@ COPY docs ./docs
 # The default install does not pull PyTorch or MLflow.
 RUN python -m pip install --no-cache-dir --constraint requirements-linux-py312.txt . \
     && if [ "$WITH_DEEP" = "1" ]; then \
+         python -m pip install --no-cache-dir --constraint requirements-linux-py312.txt \
+           filelock typing-extensions setuptools sympy networkx jinja2 fsspec \
+         && \
          python -m pip install --no-cache-dir --constraint requirements-linux-py312.txt torch \
            --index-url https://download.pytorch.org/whl/cpu; \
        elif [ "$WITH_DEEP" != "0" ]; then \
