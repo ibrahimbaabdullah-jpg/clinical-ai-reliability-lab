@@ -19,6 +19,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
+from clinical_lab import __version__
 from clinical_lab.data import DYNAMIC_COLUMNS, make_splits
 from clinical_lab.evaluation import choose_threshold, evaluate
 from clinical_lab.features import build_features
@@ -148,7 +149,7 @@ def _measurements(frame: pd.DataFrame) -> list[dict]:
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="Clinical AI Reliability Lab", version="0.1.0",
+    app = FastAPI(title="Clinical AI Reliability Lab", version=__version__,
                   docs_url=None, redoc_url=None,
                   description="Retrospective research platform; synthetic-only patient replay.")
 

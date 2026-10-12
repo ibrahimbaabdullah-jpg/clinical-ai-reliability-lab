@@ -132,6 +132,10 @@ function downloadReport(format) {
  const href=URL.createObjectURL(blob),link=document.createElement('a');link.href=href;link.download=`clinical-ai-reliability-${report.metadata?.source||'report'}.${format}`;link.click();setTimeout(()=>URL.revokeObjectURL(href),1000);
 }
 window.addEventListener('hashchange',page);
+$('skip-content').addEventListener('click',event=>{
+ event.preventDefault();
+ $('main').focus();
+});
 $('patient-select').addEventListener('change',setPatient);
 for(const id of ['model-select','stress-select','severity-select'])$(id).addEventListener('change',replay);
 let sliderTimer;$('hour-slider').addEventListener('input',()=>{clearTimeout(sliderTimer);$('hour-title').textContent=$('hour-value').textContent=$('hour-slider').value;sliderTimer=setTimeout(replay,120);});
