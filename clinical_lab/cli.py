@@ -2,12 +2,15 @@
 from __future__ import annotations
 
 import argparse
+import gc
 from datetime import datetime, timezone
 import hashlib
 import importlib.metadata
 import importlib.resources
 import json
+import os
 from pathlib import Path
+import platform
 import subprocess
 import sys
 import time
@@ -195,11 +198,16 @@ def run(args):
                 'data_sha256': data_hash, 'protocol_sha256': hashlib.sha256(protocol_text.encode()).hexdigest(),
                 'config_sha256': hashlib.sha256(config_text.encode()).hexdigest(),
                 'split_sha256': hashlib.sha256((output / 'split_manifest.json').read_bytes()).hexdigest(),
-                'code_revision': revision, 'source_tree_sha256': source_hash.hexdigest(), 'data_provenance': provenance, 'environment': env, 'seed': seed}
+                'code_revision': revision, 'source_tree_sha256': source_hash.hexdigest(), 'data_provenance': provenance, 'environment': env, 'seed': seed,
+                'compute_environment': {'system': platform.system(), 'machine': platform.machine(),
+                                        'omp_num_threads': os.environ.get('OMP_NUM_THREADS'),
+                                        'openblas_num_threads': os.environ.get('OPENBLAS_NUM_THREADS')}}
     write_json(output / 'run_manifest.json', metadata)
     save_parquet(df, output / 'cohort.parquet')
     write_json(output / 'cohort_summary.json', cohort_summary(output / 'cohort.parquet', use_duckdb=True))
     frames = {name: df[df.patient_id.isin(ids)].reset_index(drop=True) for name, ids in split_ids.items()}
+    del df
+    gc.collect()
     # Keep external features out of model development and selection.
     features = {name: build_features(frames[name]) for name in ['train', 'tune', 'calibrate', 'threshold']}
     bundles, dev, threshold_probabilities = {}, {}, {}
@@ -219,23 +227,30 @@ def run(args):
                  'frozen_before_test_evaluation': True, 'development_utility': {k: v['challenge']['challenge_utility'] for k, v in dev.items()}}
     write_json(output / 'selection.json', selection)
     print(f'Frozen model selection: {selected}. Beginning held-out evaluation.', flush=True)
-    features.update({name: build_features(frames[name]) for name in ['test', 'external']})
+    # Development matrices are no longer needed after the model is frozen.
+    del features
+    gc.collect()
     report = {'metadata': metadata, 'selected_family': selected, 'selection': selection,
               'splits': {name: {'patients': len(ids), 'hours': len(frames[name])} for name, ids in split_ids.items()},
               'models': {}, 'stress_tests': [], 'ablations': {}, 'selective_prediction': {}}
     bootstrap = int(config.get('bootstrap', 1000))
     for family, bundle in bundles.items():
-        result = {'parameters': bundle['model'].params, 'threshold': bundle['threshold'], 'development': dev[family]}
-        for split in ['test', 'external']:
-            p = predict(bundle, frames[split], features[split])
-            result[split] = evaluate(frames[split], p, bundle['threshold'], bootstrap=bootstrap, seed=seed)
+        report['models'][family] = {'parameters': bundle['model'].params, 'threshold': bundle['threshold'], 'development': dev[family]}
+    for split in ['test', 'external']:
+        heldout_features = build_features(frames[split])
+        for family, bundle in bundles.items():
+            print(f'Evaluating {family}: {split} ({bootstrap} patient bootstrap replicates)...', flush=True)
+            p = predict(bundle, frames[split], heldout_features)
+            report['models'][family][split] = evaluate(frames[split], p, bundle['threshold'], bootstrap=bootstrap, seed=seed)
             prediction_frame = frames[split][['patient_id', 'hospital', 'hour', 'SepsisLabel']].copy()
             prediction_frame['probability'] = p
             prediction_frame.to_parquet(output / f'{family}_{split}_predictions.parquet', index=False)
             development_distances = abs(threshold_probabilities[family][0] - bundle['threshold'])
             cutoffs = sorted(set([0.] + [float(np.quantile(development_distances, q)) for q in [.1, .25, .5]]))
             report['selective_prediction'][f'{family}_{split}'] = selective(frames[split], p, bundle['threshold'], cutoffs=cutoffs)
-        report['models'][family] = result
+            write_json(output / 'report.partial.json', report)
+        del heldout_features, prediction_frame
+        gc.collect()
     bundle = bundles[selected]
     scales = frames['train'][DYNAMIC_COLUMNS].std(ddof=0).fillna(0).to_dict()
     write_json(output / 'training_noise_scales.json', scales)
@@ -248,24 +263,33 @@ def run(args):
                     p = predict(bundle, changed)
                     report['stress_tests'].append({'family': selected, 'split': split, 'kind': kind, 'severity': severity,
                                                   'evaluation': evaluate(frames[split], p, bundle['threshold'], bootstrap=bootstrap, seed=seed)})
+                    write_json(output / 'report.partial.json', report)
+                    del changed, p
+                    gc.collect()
     if config.get('ablations', True):
         # Prespecified logistic ablations give an interpretable component study.
         for ablation in ['no_trends', 'no_missingness', 'values_only']:
             print(f'Logistic component ablation: {ablation}', flush=True)
-            f = {name: build_features(frame, ablation=ablation) for name, frame in frames.items()}
+            f = {name: build_features(frames[name], ablation=ablation) for name in ['train', 'tune', 'calibrate', 'threshold']}
             candidate, metrics, _, _ = fit_bundle('logistic', frames, f, config, seed, ablation=ablation)
+            del f
+            gc.collect()
             report['ablations'][ablation] = {'family': 'logistic', 'development': metrics, 'threshold': candidate['threshold']}
             for split in ['test', 'external']:
-                p = predict(candidate, frames[split], f[split])
+                p = predict(candidate, frames[split])
                 report['ablations'][ablation][split] = evaluate(frames[split], p, candidate['threshold'], bootstrap=bootstrap, seed=seed)
         raw_threshold = threshold_probabilities[selected][1]
         threshold = choose_threshold(frames['threshold'], raw_threshold)
         report['ablations']['no_calibration'] = {'family': selected, 'threshold': threshold}
         for split in ['test', 'external']:
-            p = bundle['model'].predict_proba(features[split], frames[split].patient_id.to_numpy())
+            heldout_features = build_features(frames[split])
+            p = bundle['model'].predict_proba(heldout_features, frames[split].patient_id.to_numpy())
+            del heldout_features
+            gc.collect()
             report['ablations']['no_calibration'][split] = evaluate(frames[split], p, threshold, bootstrap=bootstrap, seed=seed)
     report['metadata']['elapsed_seconds'] = round(time.time() - started, 2)
     write_json(output / 'report.json', report)
+    (output / 'report.partial.json').unlink(missing_ok=True)
     (output / 'report.md').write_text(render_report(report))
     if config.get('tracking', False):
         import mlflow

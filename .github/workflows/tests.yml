@@ -28,6 +28,10 @@ jobs:
       - run: python -m pytest
       - run: node tests/test_web_contract.cjs bundles/demo-v1/report.json
       - run: node tests/test_web_contract.cjs bundles/pilot-v1/report.json
+      - name: Verify portable fitted models and the complete static runtime
+        run: |
+          python scripts/build_site.py --run bundles/pilot-v1 --output "$RUNNER_TEMP/site"
+          node tests/test_site_runtime.cjs "$RUNNER_TEMP/site/data"
 
   installed-wheel:
     runs-on: ubuntu-latest
@@ -127,7 +131,20 @@ jobs:
         run: |
           docker run --detach --name lab-mounted --publish 127.0.0.1:8000:8000 --mount "type=bind,source=$RUNNER_TEMP/container-run,target=/app/run,readonly" --env CLINICAL_LAB_RUN=/app/run "$TEST_IMAGE"
           python tests/test_container_smoke.py
-          docker inspect --format '{{json .State.Health}}' lab-mounted
+          python - <<'PYHEALTH'
+          import subprocess, time
+          deadline = time.monotonic() + 60
+          while time.monotonic() < deadline:
+              status = subprocess.check_output(['docker', 'inspect', '--format', '{{.State.Health.Status}}', 'lab-mounted'], text=True).strip()
+              if status == 'healthy':
+                  print('Docker healthcheck passed')
+                  break
+              if status == 'unhealthy':
+                  raise SystemExit('Docker healthcheck failed')
+              time.sleep(2)
+          else:
+              raise SystemExit('Docker healthcheck did not become healthy')
+          PYHEALTH
       - name: Show image identity and container logs
         if: always()
         run: |

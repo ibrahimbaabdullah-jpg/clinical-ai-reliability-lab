@@ -8,6 +8,7 @@ const names = {logistic:'Logistic regression',xgboost:'Gradient-boosted trees',g
 const details = {logistic:'Regularized interpretable baseline',xgboost:'Nonlinear tabular learning',gru:'Causal patient trajectories'};
 let status, report, patients = [], replaySequence = 0;
 async function request(url, options) {
+ if (globalThis.clinicalLabSite) return globalThis.clinicalLabSite.request(url, options);
  const response = await fetch(url, options);
  if (!response.ok) {
   let detail = `Request failed (${response.status})`;
@@ -23,10 +24,10 @@ function page() {
  $('breadcrumb').textContent = {overview:'Overview',replay:'Patient replay',reliability:'Reliability report',methods:'Methods & limitations'}[id];
  if (id === 'replay' && patients.length && !$('timeline-chart').hasChildNodes()) replay();
 }
-function metric(label,value,detail) { return `<div class="metric"><div class="metric-label">${escapeHtml(label)}</div><div class="metric-value">${escapeHtml(value)}</div><div class="metric-detail">${escapeHtml(detail)}</div></div>`; }
+function metric(label,value,detail,definition='') { return `<div class="metric"${definition?' title="'+escapeHtml(definition)+'"':''}><div class="metric-label">${escapeHtml(label)}</div><div class="metric-value">${escapeHtml(value)}</div><div class="metric-detail">${escapeHtml(detail)}</div></div>`; }
 function overview() {
  const metadata = report.metadata || {}, selected = report.selected_family || Object.keys(report.models)[0], evaluation = report.models[selected]?.external;
- $('overview-metrics').innerHTML = metric('Cohort',metadata.patients?.toLocaleString() || '—',metadata.source === 'synthetic' ? 'Generated synthetic patients' : 'Patients in the loaded experiment') + metric('Trained model families',Object.keys(report.models).length,'Available in this run') + metric('External event sensitivity',percent(evaluation?.pre_onset?.event_sensitivity),'Selected family · hospital B') + metric('False alerts / patient-day',number(evaluation?.pre_onset?.false_alerts_per_patient_day,2),'Sepsis-free time · hospital B');
+ $('overview-metrics').innerHTML = metric('Cohort',metadata.patients?.toLocaleString() || '—',metadata.source === 'synthetic' ? 'Generated synthetic patients' : 'Patients in the loaded experiment') + metric('Trained model families',Object.keys(report.models).length,'Available in this run') + metric('External event sensitivity',percent(evaluation?.pre_onset?.event_sensitivity),'Selected family · hospital B') + metric('False alerts / patient-day',number(evaluation?.pre_onset?.false_alerts_per_patient_day,2),'Eligible non-warning patient-days · B','Observed hours of never-septic patients plus hours before onset minus 6 in eligible septic patients, divided by 24. Excludes warning-window and post-onset hours and all censored septic cases.');
  $('model-table').innerHTML = Object.keys(names).map(family => {
   const evaluation = report.models[family]?.external, mark = family === selected ? '<span class="selected-mark">SELECTED</span>' : '';
   if (!evaluation) return `<tr><td><strong>${names[family]}</strong><span class="model-detail">${details[family]}</span></td><td colspan="5" class="na">Not trained in this run</td></tr>`;
@@ -63,7 +64,7 @@ async function replay() {
   $('replay-status').textContent=`Synthetic timeline · threshold ${result.threshold>1?'above 100% (no-alert policy)':percent(result.threshold)} · ${payload.stress==='none'?'original observations':payload.stress+', '+payload.severity+' severity'}. ${payload.stress==='delay'?'Measurement age is time since delayed availability, not specimen age.':''}`;
   $('measurements').innerHTML=result.measurements.map(m=>`<tr><td>${escapeHtml(m.label)}</td><td>${m.value===null?'—':escapeHtml(m.value)+' <span class="model-detail">'+escapeHtml(m.unit)+'</span>'}</td><td><span class="availability ${escapeHtml(m.status)}">${m.age_hours===null?'Unmeasured':m.age_hours===0?'Observed now':m.status==='stale'?'Stale · '+m.age_hours+' h':'Carried · '+m.age_hours+' h'}</span></td></tr>`).join('');
   const maximum=Math.max(...result.contributions.map(c=>Math.abs(c.value)),.001);
-  $('contributions').innerHTML=result.contributions.length?result.contributions.map(c=>`<div class="contribution"><div class="contribution-title"><span class="contribution-name">${escapeHtml(c.feature)}</span><span class="contribution-value ${c.value>0?'positive':''}">${c.value>0?'+':''}${number(c.value,2)}</span></div><svg class="contribution-track" width="100%" height="5" role="presentation"><rect width="100%" height="5" fill="#f0f3f5"/><rect width="${(Math.abs(c.value)/maximum*100).toFixed(1)}%" height="5" rx="2" fill="${c.value>0?'#c99a54':'#40a293'}"/></svg></div>`).join(''):'<p class="empty">Feature attributions are not available for this temporal model. No explanation is fabricated.</p>';
+  $('contributions').innerHTML=result.contributions.length?result.contributions.map(c=>`<div class="contribution"><div class="contribution-title"><span class="contribution-name">${escapeHtml(c.feature)}</span><span class="contribution-value ${c.value>0?'positive':''}">${c.value>0?'+':''}${number(c.value,2)}</span></div><svg class="contribution-track" width="100%" height="5" role="presentation"><rect width="100%" height="5" fill="#f0f3f5"/><rect width="${(Math.abs(c.value)/maximum*100).toFixed(1)}%" height="5" rx="2" fill="${c.value>0?'#c99a54':'#40a293'}"/></svg></div>`).join(''):`<p class="empty">${escapeHtml(result.contribution_unavailable_reason || 'Feature attributions are not available for this model.')}</p>`;
  } catch(error) {if(seq===replaySequence)$('replay-status').textContent=error.message;}
 }
 function calibration(bins) {
@@ -85,6 +86,12 @@ function reliability() {
  $('stress-table').innerHTML=stress.length?stress.map(s=>{const e=s.evaluation,condition={missing:'Missingness',missingness:'Missingness',delay:'Delay',noise:'Noise'}[s.kind]||s.kind;const severity=['missing','missingness'].includes(s.kind)?percent(s.severity):s.kind==='delay'?s.severity+' h':s.severity+' × train SD';return `<tr><td><strong>${escapeHtml(condition)}</strong><span class="model-detail">${escapeHtml(severity)}</span></td><td>${s.split==='external'?'B external':'A test'}</td><td>${number(e.hourly_metrics.average_precision)}</td><td>${number(e.hourly_metrics.brier)}</td><td>${percent(e.pre_onset.event_sensitivity)}</td><td>${number(e.pre_onset.false_alerts_per_patient_day,2)}</td></tr>`;}).join(''):'<tr><td colspan="6" class="empty">No stress experiment results for this model in the loaded run. Use Patient replay to inspect controlled synthetic perturbations.</td></tr>';
  const ci=model.external?.confidence_intervals||{};
  $('confidence').innerHTML=[['Average precision','average_precision'],['Event sensitivity','event_sensitivity'],['False alerts / day','false_alerts_per_patient_day']].map(([label,key])=>{const item=ci[key];return `<div class="interval-row"><span>${label}</span><strong>${finite(item?.lower)?number(item.lower)+'–'+number(item.upper):'Not estimable'}</strong></div>`;}).join('')+`<p class="footnote">${escapeHtml(report.metadata?.bootstrap_replicates??'Unspecified')} requested bootstrap replicates in this run. Undefined intervals are not replaced with zero.</p>`;
+ const ablations=Object.entries(report.ablations||{}).filter(([,entry])=>entry.family===family);
+ const ablationNames={no_trends:'Without trend features',no_missingness:'Without missingness features',values_only:'Recent values only',no_calibration:'Without calibration'};
+ $('ablation-table').innerHTML=ablations.length?ablations.map(([name,entry])=>{const e=entry.external;return `<tr><td>${escapeHtml(ablationNames[name]||name)}</td><td>${number(e?.hourly_metrics?.average_precision)}</td><td>${number(e?.hourly_metrics?.brier)}</td><td>${percent(e?.pre_onset?.event_sensitivity)}</td><td>${number(e?.pre_onset?.false_alerts_per_patient_day,2)}</td></tr>`;}).join(''):'<tr><td colspan="5" class="empty">No component-ablation experiment is recorded for this model. Feature ablations use logistic regression; the calibration ablation uses the development-selected family.</td></tr>';
+ const subgroupNames={age_lt65:'Age under 65',age_ge65:'Age 65 or older',age_missing:'Age not recorded',gender_0:'Recorded gender code 0',gender_1:'Recorded gender code 1',gender_missing_or_other:'Gender missing or other'};
+ const groups=Object.entries(model.external?.subgroups||{});
+ $('subgroup-table').innerHTML=groups.length?groups.map(([name,entry])=>`<tr><td>${escapeHtml(subgroupNames[name]||name)}</td><td>${entry.patients}</td><td>${entry.positive_patients}</td>${entry.suppressed?`<td colspan="3" class="na">Suppressed · ${escapeHtml(entry.reason||'insufficient patients or events')}</td>`:`<td>${number(entry.hourly_metrics?.average_precision)}</td><td>${number(entry.hourly_metrics?.brier)}</td><td>${percent(entry.pre_onset?.event_sensitivity)}</td>`}</tr>`).join(''):'<tr><td colspan="6" class="empty">Subgroup results are unavailable for this run.</td></tr>';
  const selection=report.selective_prediction?.[`${family}_external`];
  $('selective').innerHTML=selection?.results?.length?`<p>${selection.results.length} withholding settings were evaluated for this family in hospital B.</p><div class="table-wrap"><table><thead><tr><th>Coverage</th><th>Missed events</th><th>Events with withheld hours</th><th>Fully withheld events</th><th>Retained Brier</th><th>Withheld hours</th></tr></thead><tbody>${selection.results.map(r=>`<tr><td>${percent(r.coverage)}</td><td>${finite(r.missed_events)?r.missed_events:'—'}</td><td>${finite(r.eligible_events_with_any_withheld_warning_hour)?r.eligible_events_with_any_withheld_warning_hour:'—'}</td><td>${finite(r.eligible_events_with_all_warning_hours_withheld)?r.eligible_events_with_all_warning_hours_withheld:'—'}</td><td>${number(r.retained_brier)}</td><td>${finite(r.withheld_hours)?r.withheld_hours:'—'}</td></tr>`).join('')}</tbody></table></div><p class="footnote">Withheld-event counts use the six-hour pre-onset warning window: any withheld warning hour, or every warning hour withheld. Missed events treat withheld predictions as no alert. Retained Brier describes only predictions the model kept.</p>`:'<p>No selective-prediction experiment is recorded for this local demonstration. The reproducible benchmark command produces this analysis.</p>';
 }
@@ -101,11 +108,27 @@ async function init() {
   if(available.includes(report.selected_family))$('report-model').value=$('model-select').value=report.selected_family;
   $('patient-select').innerHTML=patients.map((p,i)=>`<option value="${escapeHtml(p.id)}">Patient ${String(i+1).padStart(3,'0')} · synthetic hospital ${escapeHtml(p.hospital)} · ${p.hours} h</option>`).join('');
   overview();reliability();setPatient();$('loading').hidden=true;
+  if(status.runtime==='browser') { $('runtime-label').textContent='INTERACTIVE RESEARCH EDITION'; $('runtime-detail').textContent='Fitted models run in your browser. Replay uses generated timelines; aggregate benchmark results come from the recorded experiment.'; $('runtime-detail').hidden=false; $('replay-description').textContent='Only measurements at or before the selected hour enter the model. The challenge label includes pre-onset and post-onset hours. Browser perturbations use reproducible random draws distinct from the recorded benchmark stress experiments.'; }
  } catch(error) {$('loading').hidden=true;$('error').hidden=false;$('error').textContent=error.message+' Refresh after checking the local server configuration.';}
+}
+function reportCsv() {
+ const headers=['source','complete_public_cohort','family','cohort','patients','patient_hours','average_precision','auroc','brier','event_sensitivity','eligible_events','missed_events','false_alerts_per_patient_day','median_lead_time_hours'];
+ const rows=[];
+ for(const [family,model] of Object.entries(report.models))for(const split of ['test','external']) { const e=model[split];if(!e)continue;rows.push([report.metadata?.source,report.metadata?.complete_public_cohort,family,split,e.patients,e.patient_hours,e.hourly_metrics?.average_precision,e.hourly_metrics?.auroc,e.hourly_metrics?.brier,e.pre_onset?.event_sensitivity,e.pre_onset?.eligible_events,e.pre_onset?.missed_events,e.pre_onset?.false_alerts_per_patient_day,e.pre_onset?.median_lead_time_hours]); }
+ const cell=value=>`"${String(value??'').replaceAll('"','""')}"`;
+ return [headers,...rows].map(row=>row.map(cell).join(',')).join('\r\n');
+}
+function downloadReport(format) {
+ if(!report)return;
+ const content=format==='json'?JSON.stringify(report,null,2):reportCsv();
+ const blob=new Blob([content],{type:format==='json'?'application/json':'text/csv;charset=utf-8'});
+ const href=URL.createObjectURL(blob),link=document.createElement('a');link.href=href;link.download=`clinical-ai-reliability-${report.metadata?.source||'report'}.${format}`;link.click();setTimeout(()=>URL.revokeObjectURL(href),1000);
 }
 window.addEventListener('hashchange',page);
 $('patient-select').addEventListener('change',setPatient);
 for(const id of ['model-select','stress-select','severity-select'])$(id).addEventListener('change',replay);
 let sliderTimer;$('hour-slider').addEventListener('input',()=>{clearTimeout(sliderTimer);$('hour-title').textContent=$('hour-value').textContent=$('hour-slider').value;sliderTimer=setTimeout(replay,120);});
 $('report-model').addEventListener('change',reliability);
+$('download-json').addEventListener('click',()=>downloadReport('json'));
+$('download-csv').addEventListener('click',()=>downloadReport('csv'));
 init();

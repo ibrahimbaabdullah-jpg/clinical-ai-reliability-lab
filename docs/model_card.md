@@ -20,7 +20,7 @@ For any fitted artifact, identify it using its run directory, `run_manifest.json
 
 ## Intended users, population, and use
 
-Intended users are machine-learning researchers, nursing informatics researchers, and students inspecting a retrospective prediction workflow. The target research context is adult ICU care as represented by the released PhysioNet/CinC 2019 cohorts. The platform compares model families, reproduces a challenge scoring task, and measures sensitivity to controlled observation changes and transfer from hospital A to hospital B.
+Intended users are machine-learning researchers, nursing informatics researchers, and students inspecting a retrospective prediction workflow. The target research context is ICU care as represented by the released PhysioNet/CinC 2019 cohorts. The platform compares model families, reproduces a challenge scoring task, and measures sensitivity to controlled observation changes and transfer from hospital A to hospital B.
 
 The replay interface uses synthetic patient timelines. It supports inspecting scores, recorded observation availability, and mathematical feature contributions where implemented. It is not connected to a live clinical record system.
 

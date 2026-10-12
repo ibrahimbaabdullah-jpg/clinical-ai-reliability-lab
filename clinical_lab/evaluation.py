@@ -34,13 +34,17 @@ def _validated(df: pd.DataFrame, probabilities: Iterable[float]) -> tuple[pd.Dat
         raise ValueError("Probabilities must be one finite value in [0,1] per row")
     if df[list(required)].isna().any().any() or not df.SepsisLabel.isin([0, 1]).all():
         raise ValueError("Metadata must be complete and SepsisLabel binary")
-    frame = df.reset_index(drop=True)
+    # Evaluation needs metadata and subgroup fields, never the full feature
+    # table. Avoid copying 40 clinical columns in each stress/bootstrap call.
+    columns = ["patient_id", "hospital", "hour", "SepsisLabel"]
+    columns += [column for column in ("Age", "Gender") if column in df]
+    frame = df.loc[:, columns].reset_index(drop=True)
     groups, _ = pd.factorize(pd.MultiIndex.from_frame(frame[["hospital", "patient_id"]]), sort=False)
-    for _, part in frame.groupby(["hospital", "patient_id"], sort=False):
-        if not np.array_equal(part.hour.to_numpy(), np.arange(len(part))):
-            raise ValueError("Each patient must have ordered contiguous zero-based hours")
-        if (np.diff(part.SepsisLabel.to_numpy()) < 0).any():
-            raise ValueError("Challenge labels must stay positive after their first positive hour")
+    grouped = frame.groupby(groups, sort=False)
+    if not np.array_equal(frame.hour.to_numpy(), grouped.cumcount().to_numpy()):
+        raise ValueError("Each patient must have ordered contiguous zero-based hours")
+    if grouped.SepsisLabel.diff().lt(0).any():
+        raise ValueError("Challenge labels must stay positive after their first positive hour")
     return frame, p, groups
 
 
@@ -73,9 +77,11 @@ def _utility_triplet(labels: np.ndarray, predictions: np.ndarray) -> tuple[float
 
 def _patient_summaries(frame: pd.DataFrame, predictions: np.ndarray, groups: np.ndarray) -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
-    for group_id, part in frame.groupby(groups, sort=False):
-        idx = part.index.to_numpy()
-        labels = part.SepsisLabel.to_numpy(dtype=int)
+    all_labels = frame.SepsisLabel.to_numpy(dtype=int)
+    all_hours = frame.hour.to_numpy(dtype=int)
+    positions = pd.Series(np.arange(len(frame))).groupby(groups, sort=False).indices
+    for group_id, idx in positions.items():
+        labels = all_labels[idx]
         hourly = predictions[idx]
         observed, best, inaction = _utility_triplet(labels, hourly)
         row: dict[str, Any] = dict(group=int(group_id), observed_utility=observed,
@@ -83,7 +89,7 @@ def _patient_summaries(frame: pd.DataFrame, predictions: np.ndarray, groups: np.
             false_alerts=0, sepsis_free_hours=0, nonseptic_false_alerts=0,
             nonseptic_hours=0, lead_time=np.nan, excluded_left_censored=0,
             excluded_onset_after_followup=0, septic=int(labels.any()))
-        hours = part.hour.to_numpy(dtype=int)
+        hours = all_hours[idx]
         if not labels.any():
             alarms = alert_hours(hours, hourly)
             row.update(false_alerts=len(alarms), sepsis_free_hours=len(hours),
@@ -108,11 +114,15 @@ def _patient_summaries(frame: pd.DataFrame, predictions: np.ndarray, groups: np.
     return pd.DataFrame(rows).sort_values("group").reset_index(drop=True)
 
 
-def _operational(stats: pd.DataFrame, counts: np.ndarray | None = None) -> dict[str, Any]:
+def _operational(stats: pd.DataFrame, counts: np.ndarray | None = None,
+                 _columns: dict[str, np.ndarray] | None = None) -> dict[str, Any]:
     weights = np.ones(len(stats), dtype=int) if counts is None else np.asarray(counts, dtype=int)
+    columns = _columns if _columns is not None else {
+        name: stats[name].to_numpy(dtype=float) for name in stats.columns
+    }
     def total(name: str) -> float:
-        return float(np.dot(weights, stats[name].to_numpy(dtype=float)))
-    leads = np.repeat(stats.lead_time.to_numpy(dtype=float), weights)
+        return float(np.dot(weights, columns[name]))
+    leads = np.repeat(columns["lead_time"], weights)
     leads = leads[np.isfinite(leads)]
     eligible, detected = total("eligible"), total("detected")
     observed, best, inaction = (total(name) for name in ("observed_utility", "best_utility", "inaction_utility"))
@@ -139,11 +149,15 @@ class _HourlyMetrics:
         ordered = probabilities[self.order]
         self.ends = np.r_[np.flatnonzero(np.diff(ordered) != 0), len(ordered)-1]
         self.bin = np.minimum((probabilities * 10).astype(int), 9)
+        self.sorted_y = self.y[self.order]
+        self.sorted_groups = groups[self.order]
+        self.squared_errors = (self.p-self.y)**2
 
-    def metrics(self, counts: np.ndarray) -> dict[str, Any]:
-        weights = counts[self.groups].astype(float)
+    def metrics(self, counts: np.ndarray, *, primary_only: bool = False) -> dict[str, Any]:
+        float_counts = counts.astype(float)
+        weights = float_counts[self.groups]
         n = float(weights.sum())
-        w, y = weights[self.order], self.y[self.order]
+        w, y = float_counts[self.sorted_groups], self.sorted_y
         tps = np.cumsum(w*y)[self.ends]
         fps = np.cumsum(w*(1-y))[self.ends]
         positives, negatives = float(tps[-1]), float(fps[-1])
@@ -158,9 +172,12 @@ class _HourlyMetrics:
         bins_n = np.bincount(self.bin, weights=weights, minlength=10)
         bins_p = np.bincount(self.bin, weights=weights*self.p, minlength=10)
         bins_y = np.bincount(self.bin, weights=weights*self.y, minlength=10)
-        return dict(auroc=auroc, average_precision=ap,
-            brier=float(np.dot(weights, (self.p-self.y)**2)/n),
-            ece=float(np.abs(bins_p-bins_y).sum()/n),
+        primary = dict(auroc=auroc, average_precision=ap,
+            brier=float(np.dot(weights, self.squared_errors)/n),
+            ece=float(np.abs(bins_p-bins_y).sum()/n))
+        if primary_only:
+            return primary
+        return dict(**primary,
             prevalence=float(np.dot(weights,self.y)/n), patient_hours=int(n),
             reliability_bins=[dict(lower=i/10, upper=(i+1)/10, count=int(bins_n[i]),
                 mean_probability=_ratio(bins_p[i], bins_n[i]), observed_fraction=_ratio(bins_y[i],bins_n[i]))
@@ -172,9 +189,10 @@ def _confidence_intervals(cache: _HourlyMetrics, stats: pd.DataFrame, bootstrap:
         raise ValueError("Bootstrap replicates cannot be negative")
     collected: dict[str, list[float]] = {name: [] for name in PRIMARY_KEYS}
     rng, n = np.random.default_rng(seed), len(stats)
+    columns = {name: stats[name].to_numpy(dtype=float) for name in stats.columns}
     for _ in range(bootstrap):
         counts = np.bincount(rng.integers(0,n,size=n), minlength=n)
-        result = cache.metrics(counts) | _operational(stats, counts)
+        result = cache.metrics(counts, primary_only=True) | _operational(stats, counts, _columns=columns)
         for key in PRIMARY_KEYS:
             value = result[key]
             if value is not None and np.isfinite(value):

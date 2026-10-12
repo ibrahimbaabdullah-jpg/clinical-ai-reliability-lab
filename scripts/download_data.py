@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Fetch the public PhysioNet 2019 A/B cohorts without credentials.
 
-Only Python's standard library is required. Clinical records stay outside Git.
+The origin route works with Python's standard library; the optional unsigned S3
+route requires boto3. Clinical records stay outside Git.
 An archive is used only when explicitly supplied or advertised by PhysioNet;
 otherwise the current official per-hospital directory indexes are used.
 """
@@ -19,6 +20,7 @@ import os
 from pathlib import Path, PurePosixPath
 import random
 import re
+import shutil
 import stat
 import sys
 import threading
@@ -37,6 +39,10 @@ except ImportError:  # Optional; stdlib-only use remains supported.
 VERSION = "1.0.0"
 LANDING_URL = f"https://physionet.org/content/challenge-2019/{VERSION}/"
 BASE_URL = f"https://physionet.org/files/challenge-2019/{VERSION}/"
+S3_HOST = "physionet-open.s3.amazonaws.com"
+S3_BUCKET = "physionet-open"
+S3_PREFIX = f"challenge-2019/{VERSION}/"
+S3_BASE_URL = f"https://{S3_HOST}/{S3_PREFIX}"
 EXPECTED = {"A": 20336, "B": 20000}
 LICENSE_NOTE = (
     "The landing page identifies CC BY 4.0, while its downloadable LICENSE.txt "
@@ -69,9 +75,10 @@ class Links(HTMLParser):
 
 def official_url(url: str) -> str:
     parsed = urlparse(url)
-    if parsed.scheme != "https" or parsed.hostname not in {
+    official = parsed.hostname in {
         "physionet.org", "www.physionet.org", "archive.physionet.org"
-    } or parsed.username or parsed.password:
+    } or (parsed.hostname == S3_HOST and parsed.path.startswith("/" + S3_PREFIX))
+    if parsed.scheme != "https" or not official or parsed.username or parsed.password:
         raise ValueError(f"Only HTTPS URLs on official PhysioNet hosts are accepted: {url}")
     return url
 
@@ -85,9 +92,86 @@ class Fetcher:
         self.lock = threading.Lock()
         self.resume_at = 0.0
         self.local = threading.local()
+        self.s3 = None
+
+    def enable_s3(self, workers: int) -> None:
+        try:
+            import boto3
+            from botocore import UNSIGNED
+            from botocore.config import Config
+        except ImportError as error:
+            raise RuntimeError("--source s3 requires the optional boto3 package: python -m pip install boto3") from error
+        self.s3 = boto3.client("s3", region_name="us-east-1", config=Config(
+            signature_version=UNSIGNED, max_pool_connections=workers,
+            connect_timeout=self.timeout, read_timeout=self.timeout,
+            retries={"mode": "standard", "total_max_attempts": 1}))
+
+    def _s3_operation(self, operation: str, **kwargs):
+        from botocore.exceptions import BotoCoreError, ClientError
+        try:
+            return getattr(self.s3, operation)(Bucket=S3_BUCKET, **kwargs)
+        except ClientError as error:
+            metadata = error.response.get("ResponseMetadata", {})
+            raise HTTPError(S3_BASE_URL, metadata.get("HTTPStatusCode", 500),
+                            str(error), metadata.get("HTTPHeaders", {}), None) from error
+        except BotoCoreError as error:
+            raise OSError(str(error)) from error
+
+    def s3_index(self, hospital: str) -> list[dict]:
+        prefix = S3_PREFIX + f"training/training_set{hospital}/"
+        entries, token = [], None
+        while True:
+            for attempt in range(self.retries + 1):
+                self._pause()
+                try:
+                    kwargs = {"Prefix": prefix, "MaxKeys": 1000}
+                    if token:
+                        kwargs["ContinuationToken"] = token
+                    response = self._s3_operation("list_objects_v2", **kwargs)
+                    break
+                except (HTTPError, OSError) as error:
+                    self._retry(error, attempt)
+            for obj in response.get("Contents", []):
+                name = obj["Key"][len(prefix):]
+                if re.fullmatch(r"p\d+\.psv", name):
+                    entries.append({"name": name, "key": obj["Key"], "bytes": obj["Size"],
+                                    "etag": obj.get("ETag"), "last_modified": obj["LastModified"].isoformat()})
+            if not response.get("IsTruncated"):
+                return entries
+            token = response["NextContinuationToken"]
+
+    def _retry(self, error, attempt):
+        if isinstance(error, HTTPError) and error.code not in {408, 429, 500, 502, 503, 504}:
+            raise error
+        if attempt == self.retries:
+            raise error
+        delay = min(30.0, 2.0 ** attempt)
+        if isinstance(error, HTTPError):
+            value = error.headers.get("Retry-After") or error.headers.get("retry-after")
+            if value:
+                try:
+                    requested = float(value)
+                except ValueError:
+                    try:
+                        requested = (parsedate_to_datetime(value) - datetime.now(timezone.utc)).total_seconds()
+                    except (ValueError, TypeError):
+                        requested = 0.0
+                delay = max(delay, requested)
+        with self.lock:
+            self.resume_at = max(self.resume_at, time.monotonic() + delay)
 
     @contextmanager
     def _response(self, url):
+        if urlparse(url).hostname == S3_HOST:
+            from botocore.exceptions import BotoCoreError
+            result = self._s3_operation("get_object", Key=urlparse(url).path.lstrip("/"))
+            try:
+                yield SimpleNamespace(url=url, headers={"Content-Length": str(result["ContentLength"])}, read=result["Body"].read)
+            except BotoCoreError as error:
+                raise OSError(str(error)) from error
+            finally:
+                result["Body"].close()
+            return
         headers = {"User-Agent": "ClinicalAIReliabilityLab/0.1 (research downloader)", "Accept-Encoding": "identity"}
         if requests is None:
             with urlopen(Request(url, headers=headers), timeout=self.timeout) as response:
@@ -135,24 +219,7 @@ class Fetcher:
                 return {"source_url": url, "retrieved_at_utc": utc_now(), "sha256": h.hexdigest(), "bytes": size}
             except (HTTPError, URLError, OSError, TimeoutError) as error:
                 temporary.unlink(missing_ok=True)
-                if isinstance(error, HTTPError) and error.code not in {408, 429, 500, 502, 503, 504}:
-                    raise
-                if attempt == self.retries:
-                    raise
-                delay = min(30.0, 2.0 ** attempt)
-                if isinstance(error, HTTPError) and error.headers.get("Retry-After"):
-                    value = error.headers["Retry-After"]
-                    try:
-                        requested = float(value)
-                    except ValueError:
-                        try:
-                            requested = (parsedate_to_datetime(value) - datetime.now(timezone.utc)).total_seconds()
-                        except (ValueError, TypeError):
-                            requested = 0.0
-                    # Respect the whole advertised delay; no early retry on 429.
-                    delay = max(delay, requested)
-                with self.lock:
-                    self.resume_at = max(self.resume_at, time.monotonic() + delay)
+                self._retry(error, attempt)
         raise RuntimeError("Download retry loop exhausted")
 
 
@@ -205,37 +272,59 @@ def main(argv=None) -> int:
     parser.add_argument("--output", type=Path, default=Path("data/raw"))
     parser.add_argument("--limit-per-hospital", type=int, help="Uniform seeded subset; omitting this fetches all patients")
     parser.add_argument("--seed", type=int, default=2019)
-    parser.add_argument("--workers", type=int, choices=range(1, 5), default=4)
-    parser.add_argument("--source", choices=("auto", "files", "archive"), default="auto")
+    parser.add_argument("--workers", type=int, choices=range(1, 9), default=4)
+    parser.add_argument("--source", choices=("auto", "files", "archive", "s3"), default="auto")
+    parser.add_argument("--reuse-from", type=Path, help="Copy previously verified patient files and source notices from this acquisition directory")
     parser.add_argument("--archive-url", help="Exact whole-dataset ZIP URL on an official PhysioNet host")
     args = parser.parse_args(argv)
     if args.limit_per_hospital is not None and args.limit_per_hospital < 1:
         parser.error("--limit-per-hospital must be at least 1")
-    if args.source == "files" and args.archive_url:
-        parser.error("--archive-url cannot be combined with --source files")
+    if args.source in {"files", "s3"} and args.archive_url:
+        parser.error("--archive-url cannot be combined with --source files or s3")
+    if args.source != "s3" and args.workers > 4:
+        parser.error("Origin-server acquisition supports at most 4 workers; S3 supports up to 8")
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     manifest_path = output / "download_manifest.json"
     previous = json.loads(manifest_path.read_text()) if manifest_path.exists() else {}
     old_records = {item["path"]: item for item in previous.get("files", [])}
+    reuse = {}
+    if args.reuse_from:
+        args.reuse_from = args.reuse_from.resolve()
+        reuse = json.loads((args.reuse_from / "download_manifest.json").read_text())
+        if reuse.get("status") != "complete" or reuse.get("version") != VERSION:
+            parser.error("--reuse-from requires a complete acquisition manifest for version 1.0.0")
+    reusable = {item["path"]: item for item in reuse.get("files", [])}
+    reusable_notices = {item["path"]: item for item in reuse.get("source_notices", [])}
     fetcher = Fetcher()
+    if args.source == "s3":
+        fetcher.enable_s3(args.workers)
     manifest = {
         "schema_version": 1, "dataset": "PhysioNet/CinC Challenge 2019", "version": VERSION,
         "landing_url": LANDING_URL, "run_started_at_utc": utc_now(), "status": "in_progress",
         "license_note": LICENSE_NOTE, "seed": args.seed, "limit_per_hospital": args.limit_per_hospital,
-        "selection": "Uniform sampling of filenames without replacement; labels are not consulted",
+        "selection": ("All released patient filenames; no selection by outcome" if args.limit_per_hospital is None
+                      else "Uniform sampling of filenames without replacement; labels are not consulted"),
         "files": [], "source_notices": [], "expected_full_patient_counts": EXPECTED,
     }
     try:
         notices = output / ".provenance"
         for url, name in [(LANDING_URL, "dataset-landing.html"), (BASE_URL + "LICENSE.txt", "LICENSE.txt"),
                           (BASE_URL + "SHA256SUMS.txt", "upstream-SHA256SUMS.txt")]:
-            record = fetcher.download(url, notices / name)
-            record["path"] = str((notices / name).relative_to(output))
+            relative = str((notices / name).relative_to(output))
+            old = reusable_notices.get(relative, {})
+            candidate = args.reuse_from / relative if args.reuse_from else None
+            if candidate and candidate.is_file() and old.get("source_url") == url and old.get("sha256") == digest_file(candidate):
+                notices.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(candidate, notices / name)
+                record = {**old, "reused_verified_at_utc": utc_now()}
+            else:
+                record = fetcher.download(url, notices / name)
+            record["path"] = relative
             manifest["source_notices"].append(record)
 
         archive_url = args.archive_url
-        if archive_url is None and args.source != "files":
+        if archive_url is None and args.source not in {"files", "s3"}:
             links = Links()
             links.feed((notices / "dataset-landing.html").read_text(encoding="utf-8"))
             candidates = sorted({urljoin(LANDING_URL, link) for link in links.links
@@ -275,34 +364,59 @@ def main(argv=None) -> int:
                             "sha256": digest_file(destination), "bytes": destination.stat().st_size,
                         })
         else:
-            manifest["source_route"] = "official_patient_files"
+            manifest["source_route"] = "official_s3_mirror" if args.source == "s3" else "official_patient_files"
             jobs = []
             for hospital in EXPECTED:
-                url = BASE_URL + f"training/training_set{hospital}/"
-                index_path = notices / f"training_set{hospital}-index.html"
-                index_record = fetcher.download(url, index_path)
+                if args.source == "s3":
+                    print(f"Listing public S3 hospital {hospital} records", flush=True)
+                    entries = fetcher.s3_index(hospital)
+                    url = S3_BASE_URL + f"training/training_set{hospital}/"
+                    index_path = notices / f"training_set{hospital}-s3-index.json"
+                    atomic_json(index_path, {"bucket": S3_BUCKET, "prefix": S3_PREFIX + f"training/training_set{hospital}/", "objects": entries})
+                    index_record = {"source_url": url, "retrieved_at_utc": utc_now(), "sha256": digest_file(index_path), "bytes": index_path.stat().st_size}
+                    names = sorted(entry["name"] for entry in entries)
+                    objects = {entry["name"]: entry for entry in entries}
+                else:
+                    url = BASE_URL + f"training/training_set{hospital}/"
+                    index_path = notices / f"training_set{hospital}-index.html"
+                    index_record = fetcher.download(url, index_path)
+                    links = Links()
+                    links.feed(index_path.read_text(encoding="utf-8"))
+                    names = sorted({unquote(link) for link in links.links if re.fullmatch(r"p\d+\.psv", link)})
+                    objects = {}
                 index_record["path"] = str(index_path.relative_to(output))
                 manifest["source_notices"].append(index_record)
-                links = Links()
-                links.feed(index_path.read_text(encoding="utf-8"))
-                names = sorted({unquote(link) for link in links.links if re.fullmatch(r"p\d+\.psv", link)})
                 if not names:
                     raise ValueError(f"No patient files in official index for hospital {hospital}")
                 counts[hospital] = len(names)
+                if counts[hospital] != EXPECTED[hospital]:
+                    raise ValueError(f"Unexpected official hospital {hospital} count {counts[hospital]}")
                 for name in select_names(names, args.limit_per_hospital, args.seed, hospital):
-                    jobs.append((hospital, name, urljoin(url, name)))
+                    jobs.append((hospital, name, urljoin(url, name), objects.get(name)))
 
             def get_patient(job):
-                hospital, name, url = job
+                hospital, name, url, obj = job
                 destination = output / f"training_set{hospital}" / name
                 path = str(destination.relative_to(output))
                 old = old_records.get(path, {})
-                if destination.is_file() and old.get("source_url") == url and old.get("sha256") == digest_file(destination):
+                valid_sources = {url, BASE_URL + f"training/{path}"}
+                if destination.is_file() and old.get("source_url") in valid_sources and old.get("sha256") == digest_file(destination):
                     return {**old, "reused_verified_at_utc": utc_now()}
+                old = reusable.get(path, {})
+                candidate = args.reuse_from / path if args.reuse_from else None
+                if (candidate and candidate.is_file() and old.get("source_url") in valid_sources
+                        and old.get("sha256") == digest_file(candidate)
+                        and (obj is None or candidate.stat().st_size == obj["bytes"])):
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copyfile(candidate, destination)
+                    return {**old, "reused_verified_at_utc": utc_now(), "copied_from_acquisition": str(args.reuse_from)}
                 record = fetcher.download(url, destination)
+                if obj and record["bytes"] != obj["bytes"]:
+                    raise ValueError(f"S3 object size changed during acquisition: {path}")
                 return {**record, "hospital": hospital, "path": path}
 
             print(f"Downloading {len(jobs)} patient files with {args.workers} workers", flush=True)
+            transfer_started = time.monotonic()
             with concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as executor:
                 futures = [executor.submit(get_patient, job) for job in jobs]
                 for future in concurrent.futures.as_completed(futures):
@@ -314,7 +428,8 @@ def main(argv=None) -> int:
                         raise
                     if len(manifest["files"]) % 100 == 0:
                         atomic_json(manifest_path, manifest)
-                        print(f"Verified {len(manifest['files'])}/{len(jobs)} patient files", flush=True)
+                        elapsed = time.monotonic() - transfer_started
+                        print(f"Verified {len(manifest['files'])}/{len(jobs)} patient files; elapsed={elapsed:.1f}s; rate={len(manifest['files'])/max(elapsed,.001):.2f} files/s", flush=True)
 
         if counts != EXPECTED:
             raise ValueError(f"Official cohort count mismatch: observed {counts}; expected {EXPECTED}")
