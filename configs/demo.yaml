@@ -1,0 +1,20 @@
+seed: 2019
+families: [logistic, xgboost, gru]
+bootstrap: 50
+synthetic_patients: 360
+stress: true
+ablations: true
+tracking: false
+models:
+  logistic:
+    C_grid: [0.1, 1.0]
+  xgboost:
+    param_grid:
+      - {n_estimators: 60, max_depth: 2, learning_rate: 0.05}
+      - {n_estimators: 100, max_depth: 3, learning_rate: 0.05}
+  gru:
+    hidden_size_grid: [16]
+    epochs: 5
+    patience: 2
+    batch_size: 32
+    learning_rate: 0.001

@@ -1,0 +1,38 @@
+{
+  "created_at": "2026-10-12T16:58:15.050506+00:00",
+  "source": "physionet-2019",
+  "evidence_status": "reduced-cohort preliminary experiment",
+  "complete_public_cohort": false,
+  "patients": 2400,
+  "patient_hours": 91276,
+  "patients_by_hospital": {
+    "A": 1200,
+    "B": 1200
+  },
+  "bootstrap_replicates": 200,
+  "data_sha256": "bb6581a682bfe75d9933435b8668fb17c57664db4948e63f98699dad2eb5b935",
+  "protocol_sha256": "fc905650c0da63faf0a9b960e4a7faadcf9de55d265cb9860b082d302b244dfc",
+  "config_sha256": "d225613229c34dd7a12dea1232371408508f15aa8ce1326224540d2a9c85b740",
+  "split_sha256": "a7cdb263f252632f1d4f965d2c75b4549490f8a5fca03406a679f6c82421d9c3",
+  "code_revision": null,
+  "source_tree_sha256": "7278db9b65e6112376c94669c3ed4f1fd95064b2668d2160ac338708eea82492",
+  "data_provenance": {
+    "verified": true,
+    "manifest_sha256": "da21125f260f5748e89ad12d09eed806df7ee543df0d33292b360ad2065760e9",
+    "scope": "reduced",
+    "integrity_basis": "Recorded official download URLs and local SHA256, not publisher signatures"
+  },
+  "environment": {
+    "python": "3.12.14",
+    "numpy": "2.3.5",
+    "pandas": "2.2.3",
+    "scikit-learn": "1.8.0",
+    "xgboost": "3.4.1",
+    "torch": "2.14.1+cpu",
+    "duckdb": "1.5.6",
+    "pyarrow": "24.0.0",
+    "fastapi": "0.143.0",
+    "mlflow-skinny": "3.17.0"
+  },
+  "seed": 2019
+}

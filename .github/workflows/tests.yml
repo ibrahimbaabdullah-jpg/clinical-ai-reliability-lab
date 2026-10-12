@@ -1,0 +1,26 @@
+name: Research software tests
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: python -m pip install '.[dev,tracking]'
+      - run: python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - run: python -m pytest
+        env:
+          OMP_NUM_THREADS: '2'
+          OPENBLAS_NUM_THREADS: '2'
+          MLFLOW_DISABLE_AGENT_HINT: '1'
+      - run: node tests/test_web_contract.cjs bundles/demo-v1/report.json
+      - run: node tests/test_web_contract.cjs bundles/pilot-v1/report.json

@@ -1,0 +1,20 @@
+# Direct versions tested: Linux x86_64 / Python 3.12; not a transitive lockfile.
+# Install torch CPU from the PyTorch CPU index; see README for platform notes.
+numpy==2.3.5
+pandas==2.2.3
+scipy==1.17.0
+scikit-learn==1.8.0
+joblib==1.5.3
+duckdb==1.5.6
+pyarrow==24.0.0
+xgboost==3.4.1
+torch==2.14.1+cpu
+fastapi==0.143.0
+uvicorn==0.54.0
+pydantic==2.13.5
+PyYAML==6.0.3
+mlflow-skinny==3.17.0
+sqlalchemy==2.1.4
+alembic==1.20.0
+pytest==9.1.1
+httpx==0.28.1

@@ -1,0 +1,10 @@
+{
+  "selected_family": "xgboost",
+  "criterion": "threshold-partition official utility; complexity tie break",
+  "frozen_before_test_evaluation": true,
+  "development_utility": {
+    "logistic": 0.24584261321455086,
+    "xgboost": 0.3632145508537491,
+    "gru": 0.17873051224944317
+  }
+}

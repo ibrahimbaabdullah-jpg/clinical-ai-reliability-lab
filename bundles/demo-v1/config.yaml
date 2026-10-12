@@ -1,0 +1,30 @@
+ablations: true
+bootstrap: 50
+families:
+- logistic
+- xgboost
+- gru
+models:
+  gru:
+    batch_size: 32
+    epochs: 5
+    hidden_size_grid:
+    - 16
+    learning_rate: 0.001
+    patience: 2
+  logistic:
+    C_grid:
+    - 0.1
+    - 1.0
+  xgboost:
+    param_grid:
+    - learning_rate: 0.05
+      max_depth: 2
+      n_estimators: 60
+    - learning_rate: 0.05
+      max_depth: 3
+      n_estimators: 100
+seed: 2019
+stress: true
+synthetic_patients: 360
+tracking: false

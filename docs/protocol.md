@@ -26,7 +26,7 @@ Families: regularized logistic regression, XGBoost histogram trees, unidirection
 - Deletion: independently remove 10%, 30%, 50% of observed dynamic values.
 - Delay: shift dynamic observations by 1, 3, 6 hourly rows within patient, never between stays. This approximates availability delay; the dataset does not contain actual specimen/result timestamps.
 - Measurement error: zero-mean Gaussian noise with SD 0.1, 0.25, 0.5 times each training-set variable SD. Preserve existing missingness, demographics and labels. These are controlled statistical stressors, not estimated real-world error distributions.
-- Feature ablations: retrain without trends, without missingness/age-of-measurement, and using values only; recalibrate and choose thresholds on the same assigned development partitions. Also evaluate removal of calibration with its own development-selected threshold.
+- Feature ablations: retrain the logistic baseline without trends, without missingness/age-of-measurement, and using values only; recalibrate and choose thresholds on the same assigned development partitions. This initial component study is limited to logistic regression. Also evaluate removal of calibration for the development-selected family with its own development-selected threshold.
 - Selective prediction: evaluate a heuristic based on distance from the operational threshold, with cutoffs frozen using the threshold partition. Report retained hourly coverage, retained errors, withheld positive hours/events and overall event sensitivity treating withholding as no alert. Withholding is not assumed to improve safety and human-review burden remains unknown.
 
 ## Statistical reporting
@@ -42,6 +42,8 @@ Retain downloaded archives/checksums and source notices locally; do not commit c
 Prepare a manuscript using TRIPOD+AI reporting domains with explicit incomplete items. Do not claim prospective validation, clinical benefit, regulatory clearance, TRIPOD+AI compliance or a finished benchmark before evidence exists. Synthetic, reduced-cohort and complete-cohort runs must be distinguishable in every report.
 
 ## Sources
+
+Implementation clarification recorded before the first successful synthetic fit and before any real-data model fit: component ablations use logistic regression; the calibration ablation uses the development-selected family. Initial live-data verification may use a deterministic uniform sample of 1,200 patients per hospital (seed 2019), with its own frozen split manifest. This is explicitly preliminary and must not be presented as the complete cohort benchmark.
 
 - https://physionet.org/content/challenge-2019/1.0.0/
 - https://github.com/physionetchallenges/evaluation-2019
