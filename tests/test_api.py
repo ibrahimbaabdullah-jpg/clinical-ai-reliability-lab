@@ -16,11 +16,13 @@ def client():
     import os
     previous = os.environ.pop("CLINICAL_LAB_RUN", None)
     api._load_state.cache_clear()
-    with TestClient(api.create_app()) as session:
-        yield session
-    api._load_state.cache_clear()
-    if previous is not None:
-        os.environ["CLINICAL_LAB_RUN"] = previous
+    try:
+        with TestClient(api.create_app()) as session:
+            yield session
+    finally:
+        api._load_state.cache_clear()
+        if previous is not None:
+            os.environ["CLINICAL_LAB_RUN"] = previous
 
 
 def _payload(client, **overrides):
@@ -120,3 +122,73 @@ def test_real_artifact_provenance_keeps_replay_synthetic(client, monkeypatch, tm
     finally:
         monkeypatch.delenv("CLINICAL_LAB_RUN")
         api._load_state.cache_clear()
+
+
+@pytest.mark.parametrize("path", ["/api/status", "/api/patients", "/api/report", "/api/replay"])
+def test_initialization_failure_returns_sanitized_503(client, monkeypatch, path):
+    private_detail = "/private/run/model.joblib: confidential initialization detail"
+
+    def fail_to_load():
+        raise RuntimeError(private_detail)
+
+    # Replace only the loader, preserving the real exception-to-HTTP boundary
+    # and leaving the module-scoped demo cache untouched.
+    with monkeypatch.context() as patch:
+        patch.setattr(api, "_load_state", fail_to_load)
+        if path == "/api/replay":
+            response = client.post(path, json={"patient_id": "synthetic_patient", "hour": 0})
+        else:
+            response = client.get(path)
+    assert response.status_code == 503
+    assert response.json() == {
+        "detail": "Unable to initialize the local run. Check the server log and trusted artifact configuration."
+    }
+    assert private_detail not in response.text
+    assert "RuntimeError" not in response.text
+    assert client.get("/api/status").status_code == 200
+
+
+def test_noise_replay_requires_saved_training_scales(client, monkeypatch, tmp_path):
+    demo = api.state()
+    # The model contains embedded scales, but a loaded run must use its separate
+    # training-only scales artifact rather than derive scales from replay data.
+    assert demo["models"]["logistic"]["noise_scales"] is not None
+    joblib.dump(demo["models"]["logistic"], tmp_path / "logistic.joblib")
+    (tmp_path / "report.json").write_text(json.dumps({"metadata": {"source": "physionet-2019"}}))
+    payload = _payload(client)
+    assert not (tmp_path / "training_noise_scales.json").exists()
+    try:
+        with monkeypatch.context() as patch:
+            patch.setenv("CLINICAL_LAB_RUN", str(tmp_path))
+            api._load_state.cache_clear()
+            for stress in ("none", "missingness", "delay"):
+                assert client.post("/api/replay", json={**payload, "stress": stress}).status_code == 200
+            response = client.post("/api/replay", json={**payload, "stress": "noise"})
+            assert response.status_code == 409
+            assert response.json() == {
+                "detail": "Noise replay requires saved training-only measurement scales"
+            }
+    finally:
+        api._load_state.cache_clear()
+    assert client.get("/api/status").json()["demo"] is True
+    assert client.post("/api/replay", json={**payload, "stress": "noise"}).status_code == 200
+
+
+@pytest.mark.parametrize("stress", ["none", "missingness", "delay", "noise"])
+def test_replay_enforces_actual_patient_timeline(client, stress):
+    patient = client.get("/api/patients").json()["patients"][0]
+    final_hour = patient["hours"] - 1
+    # Both requests satisfy the schema; this checks the patient's actual bound.
+    assert 0 <= final_hour < 500
+    payload = {"patient_id": patient["id"], "family": "logistic", "stress": stress}
+    beyond = client.post("/api/replay", json={**payload, "hour": final_hour + 1})
+    assert beyond.status_code == 422
+    assert beyond.json() == {"detail": "Requested hour exceeds this synthetic timeline"}
+    final = client.post("/api/replay", json={**payload, "hour": final_hour})
+    assert final.status_code == 200
+    replay = final.json()
+    assert replay["patient_id"] == patient["id"]
+    assert replay["hour"] == final_hour
+    assert replay["hours"] == list(range(patient["hours"]))
+    assert len(replay["scores"]) == len(replay["baseline_scores"]) == patient["hours"]
+    assert all(np.isfinite(value) and 0 <= value <= 1 for value in replay["scores"])
