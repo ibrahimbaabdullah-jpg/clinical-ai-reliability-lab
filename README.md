@@ -12,7 +12,7 @@ Version **0.2** completes the frozen **40,336-record / 1,552,210-hour** retrospe
 
 **[Open the interactive dashboard](https://clinical-ai-reliability-lab.ibrahimbaabdullah.chatgpt.site)** · **[دليل الاستخدام بالعربية](docs/user_guide_ar.md)** · [Full benchmark](bundles/full-v1/report.md) · [Failure analysis](reports/full_failure_analysis.md)
 
-The hosted site and GitHub repository are currently private to the owner. The dashboard runs the actual exported fitted models on synthetic timelines; the benchmark panels use the recorded real-data evaluation.
+The hosted site and GitHub repository are public. The dashboard runs the actual exported fitted models on synthetic timelines; the benchmark panels use the recorded real-data evaluation.
 
 ### Hospital B results
 
@@ -111,7 +111,7 @@ Every primary estimate has exact denominators and valid bootstrap replicate coun
 | Temporal learning | PyTorch unidirectional GRU, packed variable-length sequences, masked loss and early stopping |
 | Data | Pandas/NumPy, Parquet and DuckDB |
 | Tracking | Optional local MLflow with SQLite; no cloud account |
-| App | FastAPI local dashboard and a private hosted HTML/CSS/JavaScript edition with exported fitted-model inference |
+| App | FastAPI local dashboard and a public hosted HTML/CSS/JavaScript edition with exported fitted-model inference |
 | Reproducibility | Configurations, manifests, tests, GitHub Actions workflow and Dockerfile |
 
 `requirements-tested.txt` records direct dependency versions; `requirements-linux-py312.txt` adds the installed transitive dependency closure for Linux x86_64 / Python 3.12. CI uses the latter as pip constraints. These are version snapshots, not cross-platform wheel-hash lockfiles. Each run records its actual environment. No LLM account or API is needed.
@@ -158,7 +158,7 @@ Only load trusted model artifacts: joblib deserialization can execute Python. Th
 - [TRIPOD+AI status mapping](docs/tripod_ai_mapping.md)
 - [Verification and known limitations](docs/verification.md)
 
-Core tools run without personal accounts or paid model APIs. A private hosted demonstration is deployed; access has not been made public. Software, dataset and vendored-code licensing are separate; the original project code has no public reuse license selected yet. The official scorer retains its BSD-2-Clause license.
+Core tools run without personal accounts or paid model APIs. A public hosted demonstration is deployed. Software, dataset and vendored-code licensing are separate; the original project code has no public reuse license selected yet. The official scorer retains its BSD-2-Clause license.
 
 ## References
 
